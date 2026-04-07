@@ -79,11 +79,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Find video file
             video_file = None
+
             for root, _, files in os.walk(temp_dir):
                 for file in files:
-                    if file.endswith(".mp4"):
-                        video_file = os.path.join(root, file)
+                    full_path = os.path.join(root, file)
+            
+                    # Debug log (helps a LOT)
+                    logger.info(f"Found file: {full_path}")
+            
+                    if file.lower().endswith(".mp4"):
+                        video_file = full_path
                         break
+            
+                if video_file:
+                    break
 
             if not video_file:
                 logger.warning("No video found in post")
