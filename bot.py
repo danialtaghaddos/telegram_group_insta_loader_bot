@@ -21,6 +21,18 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+def write_cookies_file():
+    cookies = os.getenv("COOKIES_TXT")
+    if not cookies:
+        return None
+
+    path = "/tmp/cookies.txt"
+    with open(path, "w") as f:
+        f.write(cookies)
+
+    return path
+
+cookies_path = write_cookies_file()
 # ==============================
 # HANDLER
 # ==============================
@@ -54,7 +66,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if IG_USERNAME and IG_PASSWORD:
                 ydl_opts["username"] = IG_USERNAME
                 ydl_opts["password"] = IG_PASSWORD
-
+            if cookies_path:
+                ydl_opts["cookiefile"] = cookies_path
+                
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 video_file = ydl.prepare_filename(info)
