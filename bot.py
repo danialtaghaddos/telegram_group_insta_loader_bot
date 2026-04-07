@@ -2,18 +2,16 @@ import os
 import re
 import tempfile
 import logging
+import requests
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
-
-import instaloader
 
 # ==============================
 # CONFIG
 # ==============================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 INSTAGRAM_REGEX = r"(https?://(www\.)?instagram\.com/[^\s]+)"
 
 logging.basicConfig(
@@ -23,26 +21,45 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Init Instaloader with safer settings
-L = instaloader.Instaloader(
-    download_pictures=False,
-    download_comments=False,
-    save_metadata=False,
-    compress_json=False,
-    request_timeout=10,
-    quiet=True
-)
+# ==============================
+# INSTAGRAM SCRAPER (NO LOGIN, NO GRAPHQL)
+# ==============================
 
-# Instagram login (REQUIRED to avoid 403)
-IG_USERNAME = os.getenv("IG_USERNAME")
-IG_PASSWORD = os.getenv("IG_PASSWORD")
-
-if IG_USERNAME and IG_PASSWORD:
+def extract_video_url(instagram_url: str) -> str | None:
     try:
-        L.login(IG_USERNAME, IG_PASSWORD)
-        logger.info("Logged into Instagram")
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+        }
+
+        # Force Instagram to return JSON (no GraphQL)
+        url = instagram_url.split("?")[0] + "?__a=1&__d=dis"
+
+        res = requests.get(url, headers=headers)
+
+        if res.status_code != 200:
+            logger.error(f"Metadata request failed: {res.status_code}")
+            return None
+
+        data = res.json()
+
+        # Try multiple paths (Instagram changes structure often)
+        try:
+            return data["graphql"]["shortcode_media"]["video_url"]
+        except:
+            pass
+
+        try:
+            return data["items"][0]["video_versions"][0]["url"]
+        except:
+            pass
+
+        logger.warning("Video URL not found in JSON")
+        return None
+
     except Exception as e:
-        logger.error(f"Instagram login failed: {e}")
+        logger.error(f"extract_video_url error: {e}")
+        return None
+
 
 # ==============================
 # HANDLER
@@ -52,9 +69,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    message_text = update.message.text
-
-    match = re.search(INSTAGRAM_REGEX, message_text)
+    match = re.search(INSTAGRAM_REGEX, update.message.text)
     if not match:
         return
 
@@ -64,37 +79,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = update.message.message_id
 
     try:
-        shortcode = url.split("/")[4]  # more reliable extraction
-        logger.info(f"Processing shortcode: {shortcode}")
+        logger.info(f"Processing: {url}")
+
+        video_url = extract_video_url(url)
+
+        if not video_url:
+            logger.warning("Failed to extract video URL")
+            return
 
         with tempfile.TemporaryDirectory() as temp_dir:
+            video_path = os.path.join(temp_dir, "video.mp4")
 
-            post = instaloader.Post.from_shortcode(L.context, shortcode)
-
-            # Ensure it's a video
-            if not post.is_video:
-                logger.warning("Post is not a video")
-                return
-
-            # Directly download video only (avoids 403 on other assets)
-            video_url = post.video_url
-
-            import requests
             headers = {
                 "User-Agent": "Mozilla/5.0",
                 "Referer": "https://www.instagram.com/"
             }
 
-            response = requests.get(video_url, headers=headers, stream=True)
+            r = requests.get(video_url, headers=headers, stream=True)
 
-            if response.status_code != 200:
-                logger.error(f"Failed to download video: {response.status_code}")
+            if r.status_code != 200:
+                logger.error(f"Video download failed: {r.status_code}")
                 return
 
-            video_path = os.path.join(temp_dir, f"{shortcode}.mp4")
-
             with open(video_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
                     if chunk:
                         f.write(chunk)
 
@@ -102,7 +110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.delete_message(chat_id, message_id)
             except Exception as e:
-                logger.warning(f"Failed to delete message: {e}")
+                logger.warning(f"Delete failed: {e}")
 
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
@@ -114,10 +122,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
 
-            logger.info("Video sent successfully")
+            logger.info("Video sent")
 
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Handler error: {e}")
 
 
 # ==============================
@@ -126,7 +134,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN is not set")
+        raise ValueError("BOT_TOKEN not set")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
