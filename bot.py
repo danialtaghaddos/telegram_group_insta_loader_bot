@@ -1,6 +1,5 @@
 import os
 import re
-import shutil
 import tempfile
 import logging
 
@@ -17,7 +16,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 INSTAGRAM_REGEX = r"(https?://(www\.)?instagram\.com/[^\s]+)"
 
-# Setup logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -25,15 +23,17 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Init instaloader
+# Init Instaloader with safer settings
 L = instaloader.Instaloader(
     download_pictures=False,
     download_comments=False,
     save_metadata=False,
-    compress_json=False
+    compress_json=False,
+    request_timeout=10,
+    quiet=True
 )
 
-# Optional: login (recommended to avoid IG blocking)
+# Instagram login (REQUIRED to avoid 403)
 IG_USERNAME = os.getenv("IG_USERNAME")
 IG_PASSWORD = os.getenv("IG_PASSWORD")
 
@@ -42,8 +42,7 @@ if IG_USERNAME and IG_PASSWORD:
         L.login(IG_USERNAME, IG_PASSWORD)
         logger.info("Logged into Instagram")
     except Exception as e:
-        logger.warning(f"Instagram login failed: {e}")
-
+        logger.error(f"Instagram login failed: {e}")
 
 # ==============================
 # HANDLER
@@ -64,39 +63,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     message_id = update.message.message_id
 
-    shortcode = None
-
     try:
-        shortcode = url.split("/")[-2]
+        shortcode = url.split("/")[4]  # more reliable extraction
         logger.info(f"Processing shortcode: {shortcode}")
 
-        # Create temp directory (auto-clean)
         with tempfile.TemporaryDirectory() as temp_dir:
 
-            # Download post into temp dir
             post = instaloader.Post.from_shortcode(L.context, shortcode)
-            L.download_post(post, target=temp_dir)
 
-            # Find video file
-            video_file = None
-
-            for root, _, files in os.walk(temp_dir):
-                for file in files:
-                    full_path = os.path.join(root, file)
-            
-                    # Debug log (helps a LOT)
-                    logger.info(f"Found file: {full_path}")
-            
-                    if file.lower().endswith(".mp4"):
-                        video_file = full_path
-                        break
-            
-                if video_file:
-                    break
-
-            if not video_file:
-                logger.warning("No video found in post")
+            # Ensure it's a video
+            if not post.is_video:
+                logger.warning("Post is not a video")
                 return
+
+            # Directly download video only (avoids 403 on other assets)
+            video_url = post.video_url
+
+            import requests
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.instagram.com/"
+            }
+
+            response = requests.get(video_url, headers=headers, stream=True)
+
+            if response.status_code != 200:
+                logger.error(f"Failed to download video: {response.status_code}")
+                return
+
+            video_path = os.path.join(temp_dir, f"{shortcode}.mp4")
+
+            with open(video_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
 
             # Delete original message
             try:
@@ -104,11 +104,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"Failed to delete message: {e}")
 
-            # Safe user mention
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
-            # Send video
-            with open(video_file, "rb") as vid:
+            with open(video_path, "rb") as vid:
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=vid,
