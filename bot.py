@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 import logging
-import requests
+import yt_dlp
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
@@ -20,46 +20,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-# ==============================
-# INSTAGRAM SCRAPER (NO LOGIN, NO GRAPHQL)
-# ==============================
-
-def extract_video_url(instagram_url: str) -> str | None:
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-        }
-
-        # Force Instagram to return JSON (no GraphQL)
-        url = instagram_url.split("?")[0] + "?__a=1&__d=dis"
-
-        res = requests.get(url, headers=headers)
-
-        if res.status_code != 200:
-            logger.error(f"Metadata request failed: {res.status_code}")
-            return None
-
-        data = res.json()
-
-        # Try multiple paths (Instagram changes structure often)
-        try:
-            return data["graphql"]["shortcode_media"]["video_url"]
-        except:
-            pass
-
-        try:
-            return data["items"][0]["video_versions"][0]["url"]
-        except:
-            pass
-
-        logger.warning("Video URL not found in JSON")
-        return None
-
-    except Exception as e:
-        logger.error(f"extract_video_url error: {e}")
-        return None
-
 
 # ==============================
 # HANDLER
@@ -81,30 +41,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logger.info(f"Processing: {url}")
 
-        video_url = extract_video_url(url)
-
-        if not video_url:
-            logger.warning("Failed to extract video URL")
-            return
-
         with tempfile.TemporaryDirectory() as temp_dir:
-            video_path = os.path.join(temp_dir, "video.mp4")
-
-            headers = {
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://www.instagram.com/"
+            ydl_opts = {
+                "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+                "format": "mp4",
+                "quiet": True,
             }
 
-            r = requests.get(video_url, headers=headers, stream=True)
+            # Optional login if needed
+            IG_USERNAME = os.getenv("IG_USERNAME")
+            IG_PASSWORD = os.getenv("IG_PASSWORD")
+            if IG_USERNAME and IG_PASSWORD:
+                ydl_opts["username"] = IG_USERNAME
+                ydl_opts["password"] = IG_PASSWORD
 
-            if r.status_code != 200:
-                logger.error(f"Video download failed: {r.status_code}")
-                return
-
-            with open(video_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                video_file = ydl.prepare_filename(info)
 
             # Delete original message
             try:
@@ -114,7 +67,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
-            with open(video_path, "rb") as vid:
+            with open(video_file, "rb") as vid:
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=vid,
@@ -122,7 +75,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
 
-            logger.info("Video sent")
+            logger.info("Video sent successfully")
 
     except Exception as e:
         logger.error(f"Handler error: {e}")
