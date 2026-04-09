@@ -2,8 +2,8 @@ import os
 import re
 import tempfile
 import logging
-import requests
 import yt_dlp
+import instaloader
 
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
@@ -38,29 +38,80 @@ def write_cookies_file():
     return path
 
 # ==============================
-# FALLBACK SCRAPER (IMAGES)
+# INSTALOADER SETUP
 # ==============================
 
-def fallback_extract_images(url):
+def get_instaloader():
+    L = instaloader.Instaloader(
+        dirname_pattern="/tmp",
+        save_metadata=False,
+        download_comments=False,
+        post_metadata_txt_pattern=""
+    )
+
+    username = os.getenv("IG_USERNAME")
+    password = os.getenv("IG_PASSWORD")
+
+    if username and password:
+        try:
+            L.login(username, password)
+        except Exception as e:
+            logger.warning(f"Login failed: {e}")
+
+    return L
+
+# ==============================
+# DOWNLOAD VIA INSTALOADER
+# ==============================
+
+def download_instagram_post(url, temp_dir):
+    shortcode = url.split("/p/")[-1].split("/")[0]
+
+    L = get_instaloader()
+
+    post = instaloader.Post.from_shortcode(L.context, shortcode)
+
+    L.dirname_pattern = temp_dir
+    L.download_post(post, target=shortcode)
+
+    files = []
+    for f in os.listdir(temp_dir):
+        path = os.path.join(temp_dir, f)
+        if path.endswith((".jpg", ".mp4")):
+            files.append(path)
+
+    return files
+
+# ==============================
+# yt-dlp (REELS)
+# ==============================
+
+def download_with_ytdlp(url, temp_dir):
+    cookies_path = write_cookies_file()
+
+    ydl_opts = {
+        "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+        "quiet": True,
+    }
+    
+    if cookies_path:
+        ydl_opts["cookiefile"] = cookies_path
+
+    files = []
+
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
 
-        res = requests.get(url, headers=headers)
-        if res.status_code != 200:
-            return []
-
-        html = res.text
-
-        # Extract og:image
-        matches = re.findall(r'property="og:image" content="([^"]+)"', html)
-
-        return list(set(matches))
+        for f in os.listdir(temp_dir):
+            path = os.path.join(temp_dir, f)
+            if os.path.isfile(path):
+                files.append(path)
 
     except Exception as e:
-        logger.error(f"Fallback error: {e}")
-        return []
+        logger.warning(f"yt-dlp failed: {e}")
+
+    return files
 
 # ==============================
 # HANDLER
@@ -83,64 +134,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Processing: {url}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            cookies_path = write_cookies_file()
-
-            ydl_opts = {
-                "outtmpl": os.path.join(temp_dir, "%(id)s_%(index)s.%(ext)s"),
-                "quiet": True,
-                "ignoreerrors": True,
-            }
-
-            if cookies_path:
-                ydl_opts["cookiefile"] = cookies_path
-
-            files = []
 
             # ==============================
-            # TRY yt-dlp FIRST
+            # ROUTE BASED ON URL TYPE
             # ==============================
 
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.extract_info(url, download=True)
-
-                for f in os.listdir(temp_dir):
-                    path = os.path.join(temp_dir, f)
-                    if os.path.isfile(path):
-                        files.append(path)
-
-            except Exception as e:
-                logger.warning(f"yt-dlp failed: {e}")
-
-            # ==============================
-            # FALLBACK (IMAGES ONLY)
-            # ==============================
+            if "/reel/" in url:
+                files = download_with_ytdlp(url, temp_dir)
+            else:
+                files = download_instagram_post(url, temp_dir)
 
             if not files:
-                logger.info("Using fallback scraper")
-
-                image_urls = fallback_extract_images(url)
-
-                for i, img_url in enumerate(image_urls):
-                    img_path = os.path.join(temp_dir, f"img_{i}.jpg")
-                    r = requests.get(img_url)
-                    if r.status_code == 200:
-                        with open(img_path, "wb") as f:
-                            f.write(r.content)
-                        files.append(img_path)
-
-            if not files:
-                logger.warning("No media found at all")
+                logger.warning("No media found")
                 return
 
-            # ==============================
-            # DELETE ORIGINAL MESSAGE
-            # ==============================
-
+            # Delete original message
             try:
                 await context.bot.delete_message(chat_id, message_id)
-            except Exception as e:
-                logger.warning(f"Delete failed: {e}")
+            except Exception:
+                pass
 
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
             caption = f"{user_mention} shared a post\n{url}"
@@ -148,30 +160,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             files = sorted(files)
 
             # ==============================
-            # SEND SINGLE
+            # SINGLE
             # ==============================
 
             if len(files) == 1:
                 file = files[0]
                 with open(file, "rb") as f:
                     if file.endswith(".mp4"):
-                        await context.bot.send_video(
-                            chat_id=chat_id,
-                            video=f,
-                            caption=caption,
-                            parse_mode="HTML"
-                        )
+                        await context.bot.send_video(chat_id, f, caption=caption, parse_mode="HTML")
                     else:
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=f,
-                            caption=caption,
-                            parse_mode="HTML"
-                        )
+                        await context.bot.send_photo(chat_id, f, caption=caption, parse_mode="HTML")
                 return
 
             # ==============================
-            # SEND CAROUSEL
+            # CAROUSEL
             # ==============================
 
             media_group = []
@@ -192,13 +194,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     media_group.append(media)
 
-            await context.bot.send_media_group(chat_id=chat_id, media=media_group)
-
-            logger.info("Media sent successfully")
+            await context.bot.send_media_group(chat_id, media=media_group)
 
     except Exception as e:
         logger.error(f"Handler error: {e}")
-
 
 # ==============================
 # MAIN
