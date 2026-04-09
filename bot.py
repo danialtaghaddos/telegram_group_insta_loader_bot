@@ -4,7 +4,7 @@ import tempfile
 import logging
 import yt_dlp
 
-from telegram import Update
+from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 # ==============================
@@ -21,6 +21,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# ==============================
+# COOKIES SUPPORT
+# ==============================
+
 def write_cookies_file():
     cookies = os.getenv("COOKIES_TXT")
     if not cookies:
@@ -32,7 +36,6 @@ def write_cookies_file():
 
     return path
 
-cookies_path = write_cookies_file()
 # ==============================
 # HANDLER
 # ==============================
@@ -51,27 +54,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = update.message.message_id
 
     try:
-        logger.info(f"Processing: {url}")
-
         with tempfile.TemporaryDirectory() as temp_dir:
+            cookies_path = write_cookies_file()
+
             ydl_opts = {
-                "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
-                "format": "mp4",
+                "outtmpl": os.path.join(temp_dir, "%(id)s_%(index)s.%(ext)s"),
                 "quiet": True,
+                "merge_output_format": "mp4",
             }
 
-            # Optional login if needed
-            IG_USERNAME = os.getenv("IG_USERNAME")
-            IG_PASSWORD = os.getenv("IG_PASSWORD")
-            if IG_USERNAME and IG_PASSWORD:
-                ydl_opts["username"] = IG_USERNAME
-                ydl_opts["password"] = IG_PASSWORD
             if cookies_path:
                 ydl_opts["cookiefile"] = cookies_path
-                
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                video_file = ydl.prepare_filename(info)
+
+            # Collect downloaded files
+            files = []
+            for f in os.listdir(temp_dir):
+                files.append(os.path.join(temp_dir, f))
+
+            if not files:
+                logger.warning("No media downloaded")
+                return
 
             # Delete original message
             try:
@@ -80,17 +85,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Delete failed: {e}")
 
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            caption = f"{user_mention} shared a post\n{url}"
 
-            with open(video_file, "rb") as vid:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=vid,
-                    caption=f"{user_mention} shared a video\n{url}",
-                    parse_mode="HTML"
-                )
+            # ==============================
+            # SEND MEDIA
+            # ==============================
 
-            logger.info("Video sent successfully")
+            # Single file
+            if len(files) == 1:
+                file = files[0]
+                with open(file, "rb") as f:
+                    if file.endswith(".mp4"):
+                        await context.bot.send_video(
+                            chat_id=chat_id,
+                            video=f,
+                            caption=caption,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=f,
+                            caption=caption,
+                            parse_mode="HTML"
+                        )
+                return
 
+            # Multiple files (carousel)
+            media_group = []
+            for i, file in enumerate(sorted(files)):
+                with open(file, "rb") as f:
+                    if file.endswith(".mp4"):
+                        media = InputMediaVideo(
+                            media=f,
+                            caption=caption if i == 0 else None,
+                            parse_mode="HTML"
+                        )
+                    else:
+                        media = InputMediaPhoto(
+                            media=f,
+                            caption=caption if i == 0 else None,
+                            parse_mode="HTML"
+                        )
+                    media_group.append(media)
+
+            await context.bot.send_media_group(
+                chat_id=chat_id,
+                media=media_group
+            )
     except Exception as e:
         logger.error(f"Handler error: {e}")
 
