@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==============================
-# COOKIES SUPPORT
+# COOKIES
 # ==============================
 
 def write_cookies_file():
@@ -54,13 +54,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_id = update.message.message_id
 
     try:
+        logger.info(f"Processing: {url}")
+
         with tempfile.TemporaryDirectory() as temp_dir:
             cookies_path = write_cookies_file()
 
             ydl_opts = {
                 "outtmpl": os.path.join(temp_dir, "%(id)s_%(index)s.%(ext)s"),
                 "quiet": True,
-                "merge_output_format": "mp4",
+                "ignoreerrors": True,   # IMPORTANT
             }
 
             if cookies_path:
@@ -69,10 +71,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
 
-            # Collect downloaded files
+            # ==============================
+            # COLLECT FILES
+            # ==============================
+
             files = []
             for f in os.listdir(temp_dir):
-                files.append(os.path.join(temp_dir, f))
+                path = os.path.join(temp_dir, f)
+                if os.path.isfile(path):
+                    files.append(path)
 
             if not files:
                 logger.warning("No media downloaded")
@@ -87,11 +94,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
             caption = f"{user_mention} shared a post\n{url}"
 
+            files = sorted(files)
+
             # ==============================
-            # SEND MEDIA
+            # SINGLE MEDIA
             # ==============================
 
-            # Single file
             if len(files) == 1:
                 file = files[0]
                 with open(file, "rb") as f:
@@ -111,19 +119,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                 return
 
-            # Multiple files (carousel)
+            # ==============================
+            # MULTI MEDIA (CAROUSEL)
+            # ==============================
+
             media_group = []
-            for i, file in enumerate(sorted(files)):
+
+            for i, file in enumerate(files[:10]):  # Telegram limit = 10
                 with open(file, "rb") as f:
                     if file.endswith(".mp4"):
                         media = InputMediaVideo(
-                            media=f,
+                            media=f.read(),
                             caption=caption if i == 0 else None,
                             parse_mode="HTML"
                         )
                     else:
                         media = InputMediaPhoto(
-                            media=f,
+                            media=f.read(),
                             caption=caption if i == 0 else None,
                             parse_mode="HTML"
                         )
@@ -133,6 +145,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=chat_id,
                 media=media_group
             )
+
+            logger.info("Media sent successfully")
+
     except Exception as e:
         logger.error(f"Handler error: {e}")
 
