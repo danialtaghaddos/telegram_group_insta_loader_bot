@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import logging
+import requests
 import yt_dlp
 
 from telegram import Update, InputMediaPhoto, InputMediaVideo
@@ -37,6 +38,31 @@ def write_cookies_file():
     return path
 
 # ==============================
+# FALLBACK SCRAPER (IMAGES)
+# ==============================
+
+def fallback_extract_images(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+        }
+
+        res = requests.get(url, headers=headers)
+        if res.status_code != 200:
+            return []
+
+        html = res.text
+
+        # Extract og:image
+        matches = re.findall(r'property="og:image" content="([^"]+)"', html)
+
+        return list(set(matches))
+
+    except Exception as e:
+        logger.error(f"Fallback error: {e}")
+        return []
+
+# ==============================
 # HANDLER
 # ==============================
 
@@ -62,30 +88,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ydl_opts = {
                 "outtmpl": os.path.join(temp_dir, "%(id)s_%(index)s.%(ext)s"),
                 "quiet": True,
-                "ignoreerrors": True,   # IMPORTANT
+                "ignoreerrors": True,
             }
 
             if cookies_path:
                 ydl_opts["cookiefile"] = cookies_path
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-
-            # ==============================
-            # COLLECT FILES
-            # ==============================
-
             files = []
-            for f in os.listdir(temp_dir):
-                path = os.path.join(temp_dir, f)
-                if os.path.isfile(path):
-                    files.append(path)
+
+            # ==============================
+            # TRY yt-dlp FIRST
+            # ==============================
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.extract_info(url, download=True)
+
+                for f in os.listdir(temp_dir):
+                    path = os.path.join(temp_dir, f)
+                    if os.path.isfile(path):
+                        files.append(path)
+
+            except Exception as e:
+                logger.warning(f"yt-dlp failed: {e}")
+
+            # ==============================
+            # FALLBACK (IMAGES ONLY)
+            # ==============================
 
             if not files:
-                logger.warning("No media downloaded")
+                logger.info("Using fallback scraper")
+
+                image_urls = fallback_extract_images(url)
+
+                for i, img_url in enumerate(image_urls):
+                    img_path = os.path.join(temp_dir, f"img_{i}.jpg")
+                    r = requests.get(img_url)
+                    if r.status_code == 200:
+                        with open(img_path, "wb") as f:
+                            f.write(r.content)
+                        files.append(img_path)
+
+            if not files:
+                logger.warning("No media found at all")
                 return
 
-            # Delete original message
+            # ==============================
+            # DELETE ORIGINAL MESSAGE
+            # ==============================
+
             try:
                 await context.bot.delete_message(chat_id, message_id)
             except Exception as e:
@@ -97,7 +148,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             files = sorted(files)
 
             # ==============================
-            # SINGLE MEDIA
+            # SEND SINGLE
             # ==============================
 
             if len(files) == 1:
@@ -120,12 +171,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # ==============================
-            # MULTI MEDIA (CAROUSEL)
+            # SEND CAROUSEL
             # ==============================
 
             media_group = []
 
-            for i, file in enumerate(files[:10]):  # Telegram limit = 10
+            for i, file in enumerate(files[:10]):
                 with open(file, "rb") as f:
                     if file.endswith(".mp4"):
                         media = InputMediaVideo(
@@ -141,10 +192,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     media_group.append(media)
 
-            await context.bot.send_media_group(
-                chat_id=chat_id,
-                media=media_group
-            )
+            await context.bot.send_media_group(chat_id=chat_id, media=media_group)
 
             logger.info("Media sent successfully")
 
