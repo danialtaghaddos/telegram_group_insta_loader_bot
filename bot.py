@@ -4,6 +4,7 @@ import tempfile
 import logging
 import yt_dlp
 import instaloader
+import asyncio
 
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
@@ -11,7 +12,6 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 # ==============================
 # CONFIG
 # ==============================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 INSTAGRAM_REGEX = r"(https?://(www\.)?instagram\.com/[^\s]+)"
 
@@ -21,11 +21,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+job_queue = asyncio.Queue()
 
 # ==============================
 # COOKIES
 # ==============================
-
 def write_cookies_file():
     cookies = os.getenv("COOKIES_TXT")
     if not cookies:
@@ -40,7 +40,6 @@ def write_cookies_file():
 # ==============================
 # INSTALOADER SETUP
 # ==============================
-
 def get_instaloader():
     L = instaloader.Instaloader(
         dirname_pattern="/tmp",
@@ -63,7 +62,6 @@ def get_instaloader():
 # ==============================
 # DOWNLOAD VIA INSTALOADER
 # ==============================
-
 def download_instagram_post(url, temp_dir):
     shortcode = url.split("/p/")[-1].split("/")[0]
 
@@ -85,7 +83,6 @@ def download_instagram_post(url, temp_dir):
 # ==============================
 # yt-dlp (REELS)
 # ==============================
-
 def download_with_ytdlp(url, temp_dir):
     cookies_path = write_cookies_file()
 
@@ -116,8 +113,7 @@ def download_with_ytdlp(url, temp_dir):
 # ==============================
 # HANDLER
 # ==============================
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, job):
     if not update.message or not update.message.text:
         return
 
@@ -126,10 +122,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     url = match.group(0)
-    user = update.message.from_user
     chat_id = update.effective_chat.id
     message_id = update.message.message_id
 
+    await job_queue.put({
+        "url": url,
+        "chat_id": update.effective_chat.id,
+        "message_id": update.message.message_id,
+    })
+
+# ==============================
+# QUEUE_PROCESSOR
+# ==============================
+async def process_job(context: ContextTypes.DEFAULT_TYPE, job):
+    url = job["url"]
+    chat_id = job["chat_id"]
+    message_id = job["message_id"]
     try:
         logger.info(f"Processing: {url}")
 
@@ -138,7 +146,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ==============================
             # ROUTE BASED ON URL TYPE
             # ==============================
-
             if "/reel/" in url:
                 files = download_with_ytdlp(url, temp_dir)
             else:
@@ -149,21 +156,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Delete original message
-            # try:
-                # await context.bot.delete_message(chat_id, message_id)
-            # except Exception:
-                # pass
-
-            caption = f"{url}"
-            # user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-            # caption = f"{user_mention} shared a post\n{url}"
-
+            caption = f"Instagram video from {url} ✔"
             files = sorted(files)
 
             # ==============================
             # SINGLE
             # ==============================
-
             if len(files) == 1:
                 file = files[0]
                 with open(file, "rb") as f:
@@ -176,7 +174,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # ==============================
             # CAROUSEL
             # ==============================
-
             media_group = []
 
             for i, file in enumerate(files[:10]):
@@ -201,10 +198,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Handler error: {e}")
 
 # ==============================
+# BACKGROUND_WORKER
+# ==============================
+async def worker(app):
+    while True:
+        job = await job_queue.get()
+
+        try:
+            await process_job(app, job)
+        except Exception as e:
+            logger.error(f"Worker error: {e}")
+        finally:
+            job_queue.task_done()
+# ==============================
 # MAIN
 # ==============================
-
-def main():
+async def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN not set")
 
@@ -214,8 +223,16 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
+   # Start workers
+    async def start_workers(app):
+        for _ in range(1):  # 🔥 number of parallel workers
+            asyncio.create_task(worker(app))
+
+    app.post_init = start_workers
+
     logger.info("Bot started...")
-    app.run_polling()
+    
+    await app.run_polling()
 
 
 if __name__ == "__main__":
