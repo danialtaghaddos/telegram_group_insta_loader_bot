@@ -25,6 +25,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 queue = asyncio.Queue()
 
+# ---------- COOKIES ----------
+def write_cookies_file():
+    cookies = os.getenv("COOKIES_TXT")
+    if not cookies:
+        return None
+
+    path = "/tmp/cookies.txt"
+    with open(path, "w") as f:
+        f.write(cookies)
+
+    return path
 
 # ---------- UTIL ----------
 def extract_instagram_url(text: str):
@@ -34,11 +45,14 @@ def extract_instagram_url(text: str):
 
 
 async def download_media(url: str, temp_dir: str):
+    cookies_path = write_cookies_file()
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
-        "quiet": True,
-        "cookiefile": os.getenv("COOKIE_FILE", "cookies.txt"),
+        "quiet": True
     }
+
+    if cookies_path:
+        ydl_opts["cookiefile"] = cookies_path
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -54,9 +68,6 @@ async def worker():
 
         try:
             message = update.message
-
-            await message.reply_text("Processing...")
-
             temp_dir = tempfile.mkdtemp()
 
             try:
@@ -78,7 +89,6 @@ async def worker():
 
         except Exception as e:
             logger.error(f"Worker error: {e}")
-            await update.message.reply_text("Failed to process link.")
 
         finally:
             queue.task_done()
