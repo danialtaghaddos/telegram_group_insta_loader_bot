@@ -213,27 +213,21 @@ async def worker(app):
 # ==============================
 # MAIN
 # ==============================
-async def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN not set")
-
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
-   # Start workers
     async def start_workers(app):
-        for _ in range(1):  # 🔥 number of parallel workers
+        for _ in range(2):
             asyncio.create_task(worker(app))
 
     app.post_init = start_workers
 
     logger.info("Bot started...")
-    
-    await app.run_polling()
-
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
