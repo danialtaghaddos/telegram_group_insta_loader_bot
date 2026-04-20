@@ -25,6 +25,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 queue = asyncio.Queue()
 
+
 # ---------- UTIL ----------
 def extract_instagram_url(text: str):
     pattern = r"(https?://(www\.)?instagram\.com/[^\s]+)"
@@ -47,7 +48,7 @@ async def download_media(url: str, temp_dir: str):
 
 
 # ---------- QUEUE WORKER ----------
-async def worker(app):
+async def worker():
     while True:
         update, context, url = await queue.get()
 
@@ -96,19 +97,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await queue.put((update, context, url))
 
 
+# ---------- STARTUP ----------
+async def on_startup(app):
+    for _ in range(2):  # concurrency
+        asyncio.create_task(worker())
+
+
 # ---------- MAIN ----------
-async def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # start worker(s)
-    for _ in range(2):  # concurrency
-        asyncio.create_task(worker(app))
-
     logger.info("Bot started...")
-    await app.run_polling()
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
