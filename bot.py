@@ -4,8 +4,9 @@ import asyncio
 import logging
 import tempfile
 import shutil
+import subprocess
 
-from telegram import Update
+from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
@@ -25,13 +26,15 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 queue = asyncio.Queue()
 
-# ---------- COOKIES ----------
-def write_cookies_file():
+def get_cookies_file():
+    path = "/tmp/cookies.txt"
+    
+    if os.path.exists(path):
+        return path
     cookies = os.getenv("COOKIES_TXT")
     if not cookies:
         return None
 
-    path = "/tmp/cookies.txt"
     with open(path, "w") as f:
         f.write(cookies)
 
@@ -44,21 +47,50 @@ def extract_instagram_url(text: str):
     return match.group(1) if match else None
 
 
-async def download_media(url: str, temp_dir: str):
-    cookies_path = write_cookies_file()
+async def download_with_ytdlp(url: str, temp_dir: str):
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
-        "quiet": True
+        "quiet": True,
+        "cookiefile": get_cookies_file(),
     }
-
-    if cookies_path:
-        ydl_opts["cookiefile"] = cookies_path
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filepath = ydl.prepare_filename(info)
 
-    return filepath
+    return [filepath]
+
+
+async def download_with_gallery_dl(url: str, temp_dir: str):
+    cmd = [
+        "gallery-dl",
+        "--cookies", get_cookies_file(),
+        "-d", temp_dir,
+        url,
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await proc.communicate()
+
+    files = []
+    for root, _, filenames in os.walk(temp_dir):
+        for f in filenames:
+            files.append(os.path.join(root, f))
+
+    return sorted(files)
+
+
+async def download_media(url: str, temp_dir: str):
+    try:
+        # Try video first (reels)
+        return await download_with_ytdlp(url, temp_dir)
+    except Exception as e:
+        logger.warning(f"yt-dlp failed, fallback to gallery-dl: {e}")
+        return await download_with_gallery_dl(url, temp_dir)
 
 
 # ---------- QUEUE WORKER ----------
@@ -68,19 +100,39 @@ async def worker():
 
         try:
             message = update.message
+
             temp_dir = tempfile.mkdtemp()
 
             try:
-                file_path = await download_media(url, temp_dir)
+                files = await download_media(url, temp_dir)
 
-                if file_path.endswith(".mp4"):
-                    await message.reply_video(
-                        video=open(file_path, "rb"),
-                        reply_to_message_id=message.message_id,
-                    )
+                if not files:
+                    logger.warning(f"No media found in url: {url}.")
+                    continue
+
+                # Single file
+                if len(files) == 1:
+                    file_path = files[0]
+                    if file_path.endswith(".mp4"):
+                        await message.reply_video(
+                            video=open(file_path, "rb"),
+                            reply_to_message_id=message.message_id,
+                        )
+                    else:
+                        await message.reply_photo(
+                            photo=open(file_path, "rb"),
+                            reply_to_message_id=message.message_id,
+                        )
                 else:
-                    await message.reply_photo(
-                        photo=open(file_path, "rb"),
+                    media_group = []
+                    for f in files[:10]:  # Telegram limit
+                        if f.endswith(".mp4"):
+                            media_group.append(InputMediaVideo(open(f, "rb")))
+                        else:
+                            media_group.append(InputMediaPhoto(open(f, "rb")))
+
+                    await message.reply_media_group(
+                        media=media_group,
                         reply_to_message_id=message.message_id,
                     )
 
@@ -89,6 +141,7 @@ async def worker():
 
         except Exception as e:
             logger.error(f"Worker error: {e}")
+            await update.message.reply_text("Failed to process link.")
 
         finally:
             queue.task_done()
@@ -109,7 +162,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- STARTUP ----------
 async def on_startup(app):
-    for _ in range(2):  # concurrency
+    for _ in range(2):
         asyncio.create_task(worker())
 
 
