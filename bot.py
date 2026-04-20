@@ -85,13 +85,18 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
 
 async def download_media(url: str, temp_dir: str):
+    # First try gallery-dl (excellent for Instagram albums)
+    files = await download_with_gallery_dl(url, temp_dir)
+    if files:
+        return files
+    
+    # Fallback to yt-dlp (better for some Reels or when gallery-dl fails)
+    logger.info("gallery-dl returned no files, falling back to yt-dlp")
     try:
-        # Try video first (reels)
         return await download_with_ytdlp(url, temp_dir)
     except Exception as e:
-        logger.warning(f"yt-dlp failed, fallback to gallery-dl: {e}")
-        return await download_with_gallery_dl(url, temp_dir)
-
+        logger.error(f"Both downloaders failed: {e}")
+        return []
 
 # ---------- QUEUE WORKER ----------
 async def worker():
