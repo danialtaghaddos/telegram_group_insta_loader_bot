@@ -1,233 +1,114 @@
 import os
 import re
-import tempfile
-import logging
-import yt_dlp
-import instaloader
 import asyncio
+import logging
+import tempfile
+import shutil
 
-from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-# ==============================
-# CONFIG
-# ==============================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-INSTAGRAM_REGEX = r"(https?://(www\.)?instagram\.com/[^\s]+)"
+import yt_dlp
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
-
 logger = logging.getLogger(__name__)
-job_queue = asyncio.Queue()
 
-# ==============================
-# COOKIES
-# ==============================
-def write_cookies_file():
-    cookies = os.getenv("COOKIES_TXT")
-    if not cookies:
-        return None
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-    path = "/tmp/cookies.txt"
-    with open(path, "w") as f:
-        f.write(cookies)
+queue = asyncio.Queue()
 
-    return path
+# ---------- UTIL ----------
+def extract_instagram_url(text: str):
+    pattern = r"(https?://(www\.)?instagram\.com/[^\s]+)"
+    match = re.search(pattern, text)
+    return match.group(1) if match else None
 
-# ==============================
-# INSTALOADER SETUP
-# ==============================
-def get_instaloader():
-    L = instaloader.Instaloader(
-        dirname_pattern="/tmp",
-        save_metadata=False,
-        download_comments=False,
-        post_metadata_txt_pattern=""
-    )
 
-    username = os.getenv("IG_USERNAME")
-    password = os.getenv("IG_PASSWORD")
-
-    if username and password:
-        try:
-            L.login(username, password)
-        except Exception as e:
-            logger.warning(f"Login failed: {e}")
-
-    return L
-
-# ==============================
-# DOWNLOAD VIA INSTALOADER
-# ==============================
-def download_instagram_post(url, temp_dir):
-    shortcode = url.split("/p/")[-1].split("/")[0]
-
-    L = get_instaloader()
-
-    post = instaloader.Post.from_shortcode(L.context, shortcode)
-
-    L.dirname_pattern = temp_dir
-    L.download_post(post, target=shortcode)
-
-    files = []
-    for f in os.listdir(temp_dir):
-        path = os.path.join(temp_dir, f)
-        if path.endswith((".jpg", ".mp4")):
-            files.append(path)
-
-    return files
-
-# ==============================
-# yt-dlp (REELS)
-# ==============================
-def download_with_ytdlp(url, temp_dir):
-    cookies_path = write_cookies_file()
-
+async def download_media(url: str, temp_dir: str):
     ydl_opts = {
-        "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+        "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
+        "cookiefile": os.getenv("COOKIE_FILE", "cookies.txt"),
     }
-    
-    if cookies_path:
-        ydl_opts["cookiefile"] = cookies_path
 
-    files = []
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filepath = ydl.prepare_filename(info)
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
+    return filepath
 
-        for f in os.listdir(temp_dir):
-            path = os.path.join(temp_dir, f)
-            if os.path.isfile(path):
-                files.append(path)
 
-    except Exception as e:
-        logger.warning(f"yt-dlp failed: {e}")
+# ---------- QUEUE WORKER ----------
+async def worker(app):
+    while True:
+        update, context, url = await queue.get()
 
-    return files
+        try:
+            message = update.message
 
-# ==============================
-# HANDLER
-# ==============================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, job):
+            await message.reply_text("Processing...")
+
+            temp_dir = tempfile.mkdtemp()
+
+            try:
+                file_path = await download_media(url, temp_dir)
+
+                if file_path.endswith(".mp4"):
+                    await message.reply_video(
+                        video=open(file_path, "rb"),
+                        reply_to_message_id=message.message_id,
+                    )
+                else:
+                    await message.reply_photo(
+                        photo=open(file_path, "rb"),
+                        reply_to_message_id=message.message_id,
+                    )
+
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        except Exception as e:
+            logger.error(f"Worker error: {e}")
+            await update.message.reply_text("Failed to process link.")
+
+        finally:
+            queue.task_done()
+
+
+# ---------- HANDLER ----------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    match = re.search(INSTAGRAM_REGEX, update.message.text)
-    if not match:
+    url = extract_instagram_url(update.message.text)
+    if not url:
         return
 
-    url = match.group(0)
-    chat_id = update.effective_chat.id
-    message_id = update.message.message_id
+    logger.info(f"Queued: {url}")
+    await queue.put((update, context, url))
 
-    await job_queue.put({
-        "url": url,
-        "chat_id": update.effective_chat.id,
-        "message_id": update.message.message_id,
-    })
 
-# ==============================
-# QUEUE_PROCESSOR
-# ==============================
-async def process_job(context: ContextTypes.DEFAULT_TYPE, job):
-    url = job["url"]
-    chat_id = job["chat_id"]
-    message_id = job["message_id"]
-    try:
-        logger.info(f"Processing: {url}")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-
-            # ==============================
-            # ROUTE BASED ON URL TYPE
-            # ==============================
-            if "/reel/" in url:
-                files = download_with_ytdlp(url, temp_dir)
-            else:
-                files = download_instagram_post(url, temp_dir)
-
-            if not files:
-                logger.warning("No media found")
-                return
-
-            # Delete original message
-            caption = f"Instagram video from {url} ✔"
-            files = sorted(files)
-
-            # ==============================
-            # SINGLE
-            # ==============================
-            if len(files) == 1:
-                file = files[0]
-                with open(file, "rb") as f:
-                    if file.endswith(".mp4"):
-                        await context.bot.send_video(chat_id, f, caption=caption, reply_to_message_id=message_id, parse_mode="HTML")
-                    else:
-                        await context.bot.send_photo(chat_id, f, caption=caption, reply_to_message_id=message_id, parse_mode="HTML")
-                return
-
-            # ==============================
-            # CAROUSEL
-            # ==============================
-            media_group = []
-
-            for i, file in enumerate(files[:10]):
-                with open(file, "rb") as f:
-                    if file.endswith(".mp4"):
-                        media = InputMediaVideo(
-                            media=f.read(),
-                            caption=caption if i == 0 else None,
-                            parse_mode="HTML"
-                        )
-                    else:
-                        media = InputMediaPhoto(
-                            media=f.read(),
-                            caption=caption if i == 0 else None,
-                            parse_mode="HTML"
-                        )
-                    media_group.append(media)
-
-            await context.bot.send_media_group(chat_id, media=media_group, reply_to_message_id=message_id)
-
-    except Exception as e:
-        logger.error(f"Handler error: {e}")
-
-# ==============================
-# BACKGROUND_WORKER
-# ==============================
-async def worker(app):
-    while True:
-        job = await job_queue.get()
-
-        try:
-            await process_job(app, job)
-        except Exception as e:
-            logger.error(f"Worker error: {e}")
-        finally:
-            job_queue.task_done()
-# ==============================
-# MAIN
-# ==============================
-def main():
+# ---------- MAIN ----------
+async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    async def start_workers(app):
-        for _ in range(2):
-            asyncio.create_task(worker(app))
-
-    app.post_init = start_workers
+    # start worker(s)
+    for _ in range(2):  # concurrency
+        asyncio.create_task(worker(app))
 
     logger.info("Bot started...")
-    app.run_polling()
+    await app.run_polling()
+
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
