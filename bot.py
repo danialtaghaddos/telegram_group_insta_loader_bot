@@ -149,13 +149,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             # Delete original message
-            try:
-                await context.bot.delete_message(chat_id, message_id)
-            except Exception:
-                pass
+            # try:
+                # await context.bot.delete_message(chat_id, message_id)
+            # except Exception:
+                # pass
 
-            user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
-            caption = f"{user_mention} shared a post\n{url}"
+            caption = f"{url}"
+            # user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+            # caption = f"{user_mention} shared a post\n{url}"
 
             files = sorted(files)
 
@@ -167,9 +168,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file = files[0]
                 with open(file, "rb") as f:
                     if file.endswith(".mp4"):
-                        await context.bot.send_video(chat_id, f, caption=caption, parse_mode="HTML")
+                        await context.bot.send_video(chat_id, f, caption=caption, reply_to_message_id=message_id, parse_mode="HTML")
                     else:
-                        await context.bot.send_photo(chat_id, f, caption=caption, parse_mode="HTML")
+                        await context.bot.send_photo(chat_id, f, caption=caption, reply_to_message_id=message_id, parse_mode="HTML")
                 return
 
             # ==============================
@@ -194,7 +195,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     media_group.append(media)
 
-            await context.bot.send_media_group(chat_id, media=media_group)
+            await context.bot.send_media_group(chat_id, media=media_group, reply_to_message_id=message_id)
 
     except Exception as e:
         logger.error(f"Handler error: {e}")
