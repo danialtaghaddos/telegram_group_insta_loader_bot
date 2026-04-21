@@ -110,6 +110,26 @@ async def download_media(url: str, temp_dir: str):
         logger.error(f"Both downloaders failed: {e}")
         return []
 
+def ensure_ios_compatible_video(filepath: str) -> str:
+    if not filepath.endswith(".mp4"):
+        return filepath
+    
+    output_path = filepath.replace(".mp4", "_ios.mp4")
+    cmd = [
+        "ffmpeg", "-i", filepath,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p",          # Most compatible pixel format
+        "-movflags", "+faststart",      # Better streaming
+        "-vf", "scale='iw:ih'",         # Keep original resolution
+        "-y", output_path
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return output_path
+    except:
+        return filepath  # fallback to original
+
 # ---------- QUEUE WORKER ----------
 async def worker():
     while True:
@@ -144,9 +164,9 @@ async def worker():
                     media_group = []
                     for f in files[:10]:  # Telegram limit
                         if f.endswith(".mp4"):
-                            media_group.append(InputMediaVideo(open(f, "rb")))
+                            media_group.append(InputMediaVideo(open(ensure_ios_compatible_video(f), "rb")))
                         else:
-                            media_group.append(InputMediaPhoto(open(f, "rb")))
+                            media_group.append(InputMediaPhoto(open(ensure_ios_compatible_video(f), "rb")))
 
                     await message.reply_media_group(
                         media=media_group,
@@ -158,7 +178,6 @@ async def worker():
 
         except Exception as e:
             logger.error(f"Worker error: {e}")
-            await update.message.reply_text("Failed to process link.")
 
         finally:
             queue.task_done()
