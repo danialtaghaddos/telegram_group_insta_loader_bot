@@ -179,7 +179,7 @@ async def worker():
                         await message.reply_video(
                             video=open(file_path, "rb"),
                             reply_to_message_id=message.message_id,
-                            support_streaming=True
+                            supports_streaming=True,
                         )
                     else:
                         await message.reply_photo(
