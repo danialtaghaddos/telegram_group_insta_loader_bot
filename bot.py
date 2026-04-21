@@ -52,11 +52,23 @@ async def download_with_ytdlp(url: str, temp_dir: str):
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": get_cookies_file(),
+        "format": "bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
+        "postprocessors": [{
+            "key": "FFmpegVideoConvertor",
+            "preferedformat": "mp4",
+        }],
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filepath = ydl.prepare_filename(info)
+
+    if not filepath.endswith(".mp4"):
+        new_path = os.path.splitext(filepath)[0] + ".mp4"
+        if os.path.exists(filepath):
+            shutil.move(filepath, new_path)
+        filepath = new_path
 
     return [filepath]
 
