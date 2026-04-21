@@ -112,6 +112,9 @@ def ensure_ios_compatible_video(input_path: str) -> str:
         return input_path
 
     output_path = os.path.splitext(input_path)[0] + "_ios.mp4"
+    
+    # Improved video filter: preserves aspect ratio + forces even dimensions
+    vf = "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease"
 
     cmd = [
         "ffmpeg", "-i", input_path,
@@ -121,7 +124,7 @@ def ensure_ios_compatible_video(input_path: str) -> str:
         "-c:a", "aac",
         "-b:a", "128k",
         "-pix_fmt", "yuv420p",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",   # keep this
+        "-vf", vf,
         "-movflags", "+faststart",
         "-threads", "2",             # limit threads
         "-y",
