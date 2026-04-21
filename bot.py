@@ -110,25 +110,49 @@ async def download_media(url: str, temp_dir: str):
         logger.error(f"Both downloaders failed: {e}")
         return []
 
-def ensure_ios_compatible_video(filepath: str) -> str:
-    if not filepath.endswith(".mp4"):
-        return filepath
-    
-    output_path = filepath.replace(".mp4", "_ios.mp4")
+def ensure_ios_compatible_video(input_path: str) -> str:
+    """
+    Re-encode video with ffmpeg using settings that iOS Telegram loves.
+    Fixes skewed video, playback failure, and "cannot save to gallery".
+    """
+    if not input_path.lower().endswith((".mp4", ".mov")):
+        return input_path
+
+    output_path = os.path.splitext(input_path)[0] + "_ios.mp4"
+
     cmd = [
-        "ffmpeg", "-i", filepath,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k",
-        "-pix_fmt", "yuv420p",          # Most compatible pixel format
-        "-movflags", "+faststart",      # Better streaming
-        "-vf", "scale='iw:ih'",         # Keep original resolution
-        "-y", output_path
+        "ffmpeg", "-i", input_path,
+        "-c:v", "libx264",           # H.264 — iOS gold standard
+        "-preset", "medium",
+        "-crf", "23",                # excellent quality/size balance
+        "-c:a", "aac",               # AAC audio
+        "-b:a", "128k",
+        "-pix_fmt", "yuv420p",       # mandatory for iOS compatibility
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # fixes skewed/rotated videos
+        "-movflags", "+faststart",   # CRITICAL: lets iOS stream & save to gallery
+        "-y",                        # overwrite output
+        output_path
     ]
+
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=90
+        )
+        logger.info(f"✅ Re-encoded for iOS: {output_path}")
+
+        # Clean up original file
+        if os.path.exists(input_path) and input_path != output_path:
+            os.unlink(input_path)
+
         return output_path
-    except:
-        return filepath  # fallback to original
+
+    except Exception as e:
+        logger.error(f"ffmpeg re-encode failed for {input_path}: {e}")
+        return input_path  # fallback to original
 
 # ---------- QUEUE WORKER ----------
 async def worker():
@@ -151,9 +175,11 @@ async def worker():
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.endswith(".mp4"):
+                        file_path = ensure_ios_compatible_video(file_path)
                         await message.reply_video(
                             video=open(file_path, "rb"),
                             reply_to_message_id=message.message_id,
+                            support_streaming=True
                         )
                     else:
                         await message.reply_photo(
@@ -164,9 +190,10 @@ async def worker():
                     media_group = []
                     for f in files[:10]:  # Telegram limit
                         if f.endswith(".mp4"):
-                            media_group.append(InputMediaVideo(open(ensure_ios_compatible_video(f), "rb")))
+                            f = ensure_ios_compatible_video(f)
+                            media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
-                            media_group.append(InputMediaPhoto(open(ensure_ios_compatible_video(f), "rb")))
+                            media_group.append(InputMediaPhoto(open(f, "rb")))
 
                     await message.reply_media_group(
                         media=media_group,
