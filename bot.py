@@ -46,7 +46,6 @@ def extract_instagram_url(text: str):
     match = re.search(pattern, text)
     return match.group(1) if match else None
 
-
 async def download_with_ytdlp(url: str, temp_dir: str):
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
@@ -72,7 +71,6 @@ async def download_with_ytdlp(url: str, temp_dir: str):
 
     return [filepath]
 
-
 async def download_with_gallery_dl(url: str, temp_dir: str):
     cmd = [
         "gallery-dl",
@@ -95,7 +93,6 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
     return sorted(files)
 
-
 async def download_media(url: str, temp_dir: str):
     # First try gallery-dl (excellent for Instagram albums)
     files = await download_with_gallery_dl(url, temp_dir)
@@ -111,10 +108,6 @@ async def download_media(url: str, temp_dir: str):
         return []
 
 def ensure_ios_compatible_video(input_path: str) -> str:
-    """
-    Re-encode video with ffmpeg using settings that iOS Telegram loves.
-    Fixes skewed video, playback failure, and "cannot save to gallery".
-    """
     if not input_path.lower().endswith((".mp4", ".mov")):
         return input_path
 
@@ -122,15 +115,16 @@ def ensure_ios_compatible_video(input_path: str) -> str:
 
     cmd = [
         "ffmpeg", "-i", input_path,
-        "-c:v", "libx264",           # H.264 — iOS gold standard
-        "-preset", "medium",
-        "-crf", "23",                # excellent quality/size balance
-        "-c:a", "aac",               # AAC audio
+        "-c:v", "libx264",
+        "-preset", "fast",           # changed from medium → much less RAM
+        "-crf", "28",                # slightly lower quality, much lower memory
+        "-c:a", "aac",
         "-b:a", "128k",
-        "-pix_fmt", "yuv420p",       # mandatory for iOS compatibility
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # fixes skewed/rotated videos
-        "-movflags", "+faststart",   # CRITICAL: lets iOS stream & save to gallery
-        "-y",                        # overwrite output
+        "-pix_fmt", "yuv420p",
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",   # keep this
+        "-movflags", "+faststart",
+        "-threads", "2",             # limit threads
+        "-y",
         output_path
     ]
 
@@ -139,20 +133,27 @@ def ensure_ios_compatible_video(input_path: str) -> str:
             cmd,
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=90
+            stderr=subprocess.PIPE,   # capture stderr for better debugging
+            timeout=120               # increased timeout
         )
-        logger.info(f"✅ Re-encoded for iOS: {output_path}")
-
-        # Clean up original file
+        logger.info(f"✅ iOS-compatible re-encode succeeded: {output_path}")
+        
         if os.path.exists(input_path) and input_path != output_path:
-            os.unlink(input_path)
-
+            try:
+                os.unlink(input_path)
+            except Exception:
+                pass
         return output_path
 
+    except subprocess.TimeoutExpired:
+        logger.error(f"ffmpeg timeout for {input_path}")
+        return input_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ffmpeg failed for {input_path}. Stderr: {e.stderr.decode() if e.stderr else 'N/A'}")
+        return input_path
     except Exception as e:
-        logger.error(f"ffmpeg re-encode failed for {input_path}: {e}")
-        return input_path  # fallback to original
+        logger.error(f"Unexpected error during ffmpeg re-encode for {input_path}: {e}")
+        return input_path
 
 # ---------- QUEUE WORKER ----------
 async def worker():
@@ -190,7 +191,6 @@ async def worker():
                     media_group = []
                     for f in files[:10]:  # Telegram limit
                         if f.endswith(".mp4"):
-                            f = ensure_ios_compatible_video(f)
                             media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             media_group.append(InputMediaPhoto(open(f, "rb")))
@@ -209,7 +209,6 @@ async def worker():
         finally:
             queue.task_done()
 
-
 # ---------- HANDLER ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
@@ -222,12 +221,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Queued: {url}")
     await queue.put((update, context, url))
 
-
 # ---------- STARTUP ----------
 async def on_startup(app):
-    for _ in range(2):
+    for _ in range(1):
         asyncio.create_task(worker())
-
 
 # ---------- MAIN ----------
 def main():
@@ -237,7 +234,6 @@ def main():
 
     logger.info("Bot started...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
