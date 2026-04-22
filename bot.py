@@ -48,14 +48,25 @@ def get_cookies_file():
 
 # ---------- UTIL ----------
 def extract_social_urls(text: str):
-    """Extract both Instagram and Facebook URLs"""
-    pattern = r"https?://(?:www\.)?(?:instagram\.com|facebook\.com|fb\.watch)/[^\s]+"
+    """Extract Instagram and Facebook URLs"""
+    pattern = r"https?://(?:www\.)?(?:instagram\.com|facebook\.com|fb\.watch|fb\.com)/[^\s]+"
     urls = re.findall(pattern, text)
-    return list(dict.fromkeys(urls))[:MAX_MEDIA_PER_MESSAGE]  # remove duplicates + limit
+    return list(dict.fromkeys(urls))[:MAX_MEDIA_PER_MESSAGE]
+
+
+def clean_facebook_url(url: str) -> str:
+    """Clean Facebook share redirects"""
+    if "facebook.com/share/" in url or "fb.watch" in url:
+        # Try to extract the real video/photo ID if possible
+        match = re.search(r"facebook\.com/share/([a-zA-Z0-9]+)", url)
+        if match:
+            return f"https://www.facebook.com/share/{match.group(1)}/"
+    return url
 
 
 # ---------- DOWNLOAD FUNCTIONS ----------
 async def download_with_ytdlp(url: str, temp_dir: str):
+    # Improved options for Facebook + Instagram
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
@@ -66,6 +77,15 @@ async def download_with_ytdlp(url: str, temp_dir: str):
             "key": "FFmpegVideoConvertor",
             "preferedformat": "mp4",
         }],
+        # Facebook-specific improvements
+        "extractor_args": {
+            "facebook": {"skip_login": False}   # try harder with cookies
+        },
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "retries": 3,
+        "fragment_retries": 3,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -105,15 +125,16 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
 
 async def download_media(url: str, temp_dir: str):
-    # Instagram → try gallery-dl first
+    url = clean_facebook_url(url)
+
+    # Instagram: prefer gallery-dl
     if "instagram.com" in url:
         files = await download_with_gallery_dl(url, temp_dir)
         if files:
             return files
-        
         logger.info("gallery-dl failed for Instagram, falling back to yt-dlp")
-    
-    # Facebook or Instagram fallback → use yt-dlp
+
+    # Facebook or Instagram fallback: use yt-dlp with better options
     try:
         return await download_with_ytdlp(url, temp_dir)
     except Exception as e:
@@ -146,19 +167,14 @@ def ensure_ios_compatible_video(input_path: str) -> str:
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=90)
         logger.info(f"✅ iOS re-encode succeeded: {output_path}")
-        
         if os.path.exists(input_path) and input_path != output_path:
             os.unlink(input_path)
         return output_path
-
     except subprocess.TimeoutExpired:
         logger.warning(f"ffmpeg timeout - skipping re-encode for {input_path}")
         return input_path
-    except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg failed for {input_path}: {e}")
-        return input_path
     except Exception as e:
-        logger.error(f"Unexpected error during ffmpeg: {e}")
+        logger.error(f"ffmpeg re-encode failed: {e}")
         return input_path
 
 
@@ -169,9 +185,10 @@ async def worker():
 
         try:
             message = update.message
+            platform = "Instagram" if "instagram.com" in url else "Facebook"
 
             try:
-                await status_msg.edit_text(f"🔄 Downloading from {'Instagram' if 'instagram.com' in url else 'Facebook'}...")
+                await status_msg.edit_text(f"🔄 Downloading from {platform}...")
             except:
                 pass
 
@@ -183,12 +200,11 @@ async def worker():
                 if not files:
                     logger.warning(f"No media found in url: {url}")
                     try:
-                        await status_msg.edit_text("❌ Could not download media.")
+                        await status_msg.edit_text(f"❌ Could not download from {platform}. It may require login or be private.")
                     except:
                         pass
                     continue
 
-                # Single file
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.lower().endswith(".mp4"):
@@ -241,7 +257,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Extract Instagram + Facebook URLs
     urls = extract_social_urls(update.message.text)
     if not urls:
         return
@@ -250,10 +265,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for i, url in enumerate(urls, 1):
         platform = "Instagram" if "instagram.com" in url else "Facebook"
-        if len(urls) == 1:
-            status_text = f"🔄 Downloading from {platform}..."
-        else:
-            status_text = f"🔄 Queued {i}/{len(urls)} — Downloading from {platform}..."
+        status_text = f"🔄 Downloading from {platform}..." if len(urls) == 1 else f"🔄 Queued {i}/{len(urls)} — Downloading from {platform}..."
 
         status_msg = await update.message.reply_text(
             status_text,
