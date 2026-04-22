@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-queue = asyncio.Queue()
+queue: asyncio.Queue = asyncio.Queue(maxsize=30)
 
 def get_cookies_file():
     path = "/tmp/cookies.txt"
@@ -161,11 +161,13 @@ def ensure_ios_compatible_video(input_path: str) -> str:
 # ---------- QUEUE WORKER ----------
 async def worker():
     while True:
-        update, context, url = await queue.get()
+        update, context, url, status_msg = await queue.get()
 
         try:
             message = update.message
 
+            await status_msg.edit_text("🔄 Downloading media from Instagram...")
+            
             temp_dir = tempfile.mkdtemp()
 
             try:
@@ -210,6 +212,7 @@ async def worker():
             logger.error(f"Worker error: {e}")
 
         finally:
+            await asyncio.sleep(30)
             queue.task_done()
 
 # ---------- HANDLER ----------
@@ -222,7 +225,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     logger.info(f"Queued: {url}")
-    await queue.put((update, context, url))
+    if queue.qsize() == 0:
+        status_text = "🔄 Downloading from Instagram..."
+    else:
+        status_text = f"⏳ Queued ({queue.qsize()} ahead) — will start soon"
+
+    status_msg = await update.message.reply_text(
+        status_text,
+        reply_to_message_id=update.message.message_id
+    )
+
+    await queue.put((update, context, url, status_msg))
 
 # ---------- STARTUP ----------
 async def on_startup(app):
