@@ -46,6 +46,14 @@ def get_cookies_file():
         return None
 
 
+# ---------- UTIL ----------
+def extract_social_urls(text: str):
+    """Extract both Instagram and Facebook URLs"""
+    pattern = r"https?://(?:www\.)?(?:instagram\.com|facebook\.com|fb\.watch)/[^\s]+"
+    urls = re.findall(pattern, text)
+    return list(dict.fromkeys(urls))[:MAX_MEDIA_PER_MESSAGE]  # remove duplicates + limit
+
+
 # ---------- DOWNLOAD FUNCTIONS ----------
 async def download_with_ytdlp(url: str, temp_dir: str):
     ydl_opts = {
@@ -97,17 +105,19 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
 
 async def download_media(url: str, temp_dir: str):
-    # Try gallery-dl first
-    files = await download_with_gallery_dl(url, temp_dir)
-    if files:
-        return files
+    # Instagram → try gallery-dl first
+    if "instagram.com" in url:
+        files = await download_with_gallery_dl(url, temp_dir)
+        if files:
+            return files
+        
+        logger.info("gallery-dl failed for Instagram, falling back to yt-dlp")
     
-    # Fallback to yt-dlp
-    logger.info("gallery-dl returned no files, falling back to yt-dlp")
+    # Facebook or Instagram fallback → use yt-dlp
     try:
         return await download_with_ytdlp(url, temp_dir)
     except Exception as e:
-        logger.error(f"Both downloaders failed for {url}: {e}")
+        logger.error(f"Download failed for {url}: {e}")
         return []
 
 
@@ -143,7 +153,7 @@ def ensure_ios_compatible_video(input_path: str) -> str:
 
     except subprocess.TimeoutExpired:
         logger.warning(f"ffmpeg timeout - skipping re-encode for {input_path}")
-        return input_path                     # ← Fixed: skip on timeout
+        return input_path
     except subprocess.CalledProcessError as e:
         logger.error(f"ffmpeg failed for {input_path}: {e}")
         return input_path
@@ -161,7 +171,7 @@ async def worker():
             message = update.message
 
             try:
-                await status_msg.edit_text("🔄 Downloading media from Instagram...")
+                await status_msg.edit_text(f"🔄 Downloading from {'Instagram' if 'instagram.com' in url else 'Facebook'}...")
             except:
                 pass
 
@@ -173,7 +183,7 @@ async def worker():
                 if not files:
                     logger.warning(f"No media found in url: {url}")
                     try:
-                        await status_msg.edit_text("❌ Could not download media (Instagram may be blocking).")
+                        await status_msg.edit_text("❌ Could not download media.")
                     except:
                         pass
                     continue
@@ -206,7 +216,6 @@ async def worker():
                         reply_to_message_id=message.message_id,
                     )
 
-                # Success - remove status message
                 try:
                     await status_msg.delete()
                 except:
@@ -232,20 +241,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    # Extract ALL Instagram URLs
-    urls = re.findall(r"https?://(?:www\.)?instagram\.com/[^\s]+", update.message.text)
+    # Extract Instagram + Facebook URLs
+    urls = extract_social_urls(update.message.text)
     if not urls:
         return
 
-    urls = list(dict.fromkeys(urls))[:MAX_MEDIA_PER_MESSAGE]
-
-    logger.info(f"Queued {len(urls)} Instagram link(s)")
+    logger.info(f"Queued {len(urls)} social link(s)")
 
     for i, url in enumerate(urls, 1):
+        platform = "Instagram" if "instagram.com" in url else "Facebook"
         if len(urls) == 1:
-            status_text = "🔄 Downloading from Instagram..."
+            status_text = f"🔄 Downloading from {platform}..."
         else:
-            status_text = f"🔄 Queued {i}/{len(urls)} — Downloading from Instagram..."
+            status_text = f"🔄 Queued {i}/{len(urls)} — Downloading from {platform}..."
 
         status_msg = await update.message.reply_text(
             status_text,
@@ -267,7 +275,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot started...")
+    logger.info("Bot started (Instagram + Facebook support)")
     app.run_polling()
 
 
