@@ -29,6 +29,7 @@ queue: asyncio.Queue = asyncio.Queue(maxsize=30)
 
 
 def get_cookies_file():
+    """Returns Instagram cookies file (existing behavior)"""
     path = "/tmp/cookies.txt"
     
     if os.path.exists(path) and os.path.getsize(path) > 10:
@@ -42,7 +43,28 @@ def get_cookies_file():
             f.write(cookies.strip())
         return path
     except Exception as e:
-        logger.error(f"Failed to write cookies: {e}")
+        logger.error(f"Failed to write Instagram cookies: {e}")
+        return None
+
+
+def get_facebook_cookies_file():
+    """Writes Facebook cookies from env var if provided"""
+    path = "/tmp/facebook_cookies.txt"
+    
+    if os.path.exists(path) and os.path.getsize(path) > 10:
+        return path
+    
+    cookies = os.getenv("FACEBOOK_COOKIES_TXT")
+    if not cookies or not cookies.strip():
+        return None
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(cookies.strip())
+        logger.info("Facebook cookies written from FACEBOOK_COOKIES_TXT")
+        return path
+    except Exception as e:
+        logger.error(f"Failed to write Facebook cookies: {e}")
         return None
 
 
@@ -57,7 +79,6 @@ def extract_social_urls(text: str):
 def clean_facebook_url(url: str) -> str:
     """Clean Facebook share redirects"""
     if "facebook.com/share/" in url or "fb.watch" in url:
-        # Try to extract the real video/photo ID if possible
         match = re.search(r"facebook\.com/share/([a-zA-Z0-9]+)", url)
         if match:
             return f"https://www.facebook.com/share/{match.group(1)}/"
@@ -66,21 +87,19 @@ def clean_facebook_url(url: str) -> str:
 
 # ---------- DOWNLOAD FUNCTIONS ----------
 async def download_with_ytdlp(url: str, temp_dir: str):
-    # Improved options for Facebook + Instagram
+    is_facebook = "facebook.com" in url or "fb.watch" in url
+    cookiefile = get_facebook_cookies_file() if is_facebook else get_cookies_file()
+
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
-        "cookiefile": get_cookies_file(),
+        "cookiefile": cookiefile,
         "format": "bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "postprocessors": [{
             "key": "FFmpegVideoConvertor",
             "preferedformat": "mp4",
         }],
-        # Facebook-specific improvements
-        "extractor_args": {
-            "facebook": {"skip_login": False}   # try harder with cookies
-        },
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
@@ -104,7 +123,7 @@ async def download_with_ytdlp(url: str, temp_dir: str):
 async def download_with_gallery_dl(url: str, temp_dir: str):
     cmd = [
         "gallery-dl",
-        "--cookies", get_cookies_file(),
+        "--cookies", get_cookies_file() or "",  # fallback to Instagram cookies
         "-d", temp_dir,
         url,
     ]
@@ -134,7 +153,7 @@ async def download_media(url: str, temp_dir: str):
             return files
         logger.info("gallery-dl failed for Instagram, falling back to yt-dlp")
 
-    # Facebook or Instagram fallback: use yt-dlp with better options
+    # Facebook or fallback: use yt-dlp with platform-specific cookies
     try:
         return await download_with_ytdlp(url, temp_dir)
     except Exception as e:
@@ -200,7 +219,7 @@ async def worker():
                 if not files:
                     logger.warning(f"No media found in url: {url}")
                     try:
-                        await status_msg.edit_text(f"❌ Could not download from {platform}. It may require login or be private.")
+                        await status_msg.edit_text(f"❌ Could not download from {platform}. (May need fresh cookies or be private)")
                     except:
                         pass
                     continue
@@ -287,7 +306,6 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot started (Instagram + Facebook support)")
     app.run_polling()
 
 
