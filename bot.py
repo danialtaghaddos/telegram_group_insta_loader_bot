@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+MAX_MEDIA_PER_MESSAGE = 5
 queue: asyncio.Queue = asyncio.Queue(maxsize=30)
+
 
 def get_cookies_file():
     path = "/tmp/cookies.txt"
@@ -40,11 +42,13 @@ def get_cookies_file():
 
     return path
 
+
 # ---------- UTIL ----------
 def extract_instagram_url(text: str):
     pattern = r"(https?://(www\.)?instagram\.com/[^\s]+)"
     match = re.search(pattern, text)
     return match.group(1) if match else None
+
 
 async def download_with_ytdlp(url: str, temp_dir: str):
     ydl_opts = {
@@ -71,6 +75,7 @@ async def download_with_ytdlp(url: str, temp_dir: str):
 
     return [filepath]
 
+
 async def download_with_gallery_dl(url: str, temp_dir: str):
     cmd = [
         "gallery-dl",
@@ -93,19 +98,21 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
     return sorted(files)
 
+
 async def download_media(url: str, temp_dir: str):
     # First try gallery-dl (excellent for Instagram albums)
     files = await download_with_gallery_dl(url, temp_dir)
     if files:
         return files
     
-    # Fallback to yt-dlp (better for some Reels or when gallery-dl fails)
+    # Fallback to yt-dlp
     logger.info("gallery-dl returned no files, falling back to yt-dlp")
     try:
         return await download_with_ytdlp(url, temp_dir)
     except Exception as e:
         logger.error(f"Both downloaders failed: {e}")
         return []
+
 
 def ensure_ios_compatible_video(input_path: str) -> str:
     if not input_path.lower().endswith((".mp4", ".mov")):
@@ -119,14 +126,14 @@ def ensure_ios_compatible_video(input_path: str) -> str:
     cmd = [
         "ffmpeg", "-i", input_path,
         "-c:v", "libx264",
-        "-preset", "fast",           # changed from medium → much less RAM
-        "-crf", "28",                # slightly lower quality, much lower memory
+        "-preset", "fast",
+        "-crf", "28",
         "-c:a", "aac",
         "-b:a", "128k",
         "-pix_fmt", "yuv420p",
         "-vf", vf,
         "-movflags", "+faststart",
-        "-threads", "2",             # limit threads
+        "-threads", "2",
         "-y",
         output_path
     ]
@@ -136,8 +143,8 @@ def ensure_ios_compatible_video(input_path: str) -> str:
             cmd,
             check=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,   # capture stderr for better debugging
-            timeout=120               # increased timeout
+            stderr=subprocess.PIPE,
+            timeout=120
         )
         logger.info(f"✅ iOS-compatible re-encode succeeded: {output_path}")
         
@@ -158,6 +165,7 @@ def ensure_ios_compatible_video(input_path: str) -> str:
         logger.error(f"Unexpected error during ffmpeg re-encode for {input_path}: {e}")
         return input_path
 
+
 # ---------- QUEUE WORKER ----------
 async def worker():
     while True:
@@ -175,12 +183,13 @@ async def worker():
 
                 if not files:
                     logger.warning(f"No media found in url: {url}.")
+                    await status_msg.edit_text("❌ No media found in this link.")
                     continue
 
                 # Single file
                 if len(files) == 1:
                     file_path = files[0]
-                    if file_path.endswith(".mp4"):
+                    if file_path.lower().endswith(".mp4"):
                         file_path = ensure_ios_compatible_video(file_path)
                         await message.reply_video(
                             video=open(file_path, "rb"),
@@ -195,7 +204,7 @@ async def worker():
                 else:
                     media_group = []
                     for f in files[:10]:  # Telegram limit
-                        if f.endswith(".mp4"):
+                        if f.lower().endswith(".mp4"):
                             media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             media_group.append(InputMediaPhoto(open(f, "rb")))
@@ -209,38 +218,61 @@ async def worker():
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
-            logger.error(f"Worker error: {e}")
+            logger.error(f"Worker error for {url}: {e}")
+            try:
+                await status_msg.edit_text("❌ Failed to process this link.")
+            except:
+                pass
 
         finally:
+            # 30-second delay between downloads to reduce Instagram flagging
             await asyncio.sleep(30)
             queue.task_done()
+
 
 # ---------- HANDLER ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    url = extract_instagram_url(update.message.text)
-    if not url:
+    # Extract ALL Instagram URLs from the message
+    urls = re.findall(
+        r"https?://(?:www\.)?instagram\.com/[^\s]+",
+        update.message.text
+    )
+    if not urls:
         return
 
-    logger.info(f"Queued: {url}")
-    if queue.qsize() == 0:
-        status_text = "🔄 Downloading from Instagram..."
-    else:
-        status_text = f"⏳ Queued ({queue.qsize()} ahead) — will start soon"
+    # Remove duplicates while preserving order and limit per message
+    urls = list(dict.fromkeys(urls))[:MAX_MEDIA_PER_MESSAGE]
 
-    status_msg = await update.message.reply_text(
-        status_text,
-        reply_to_message_id=update.message.message_id
-    )
+    logger.info(f"Queued {len(urls)} Instagram link(s) from one message")
 
-    await queue.put((update, context, url, status_msg))
+    for i, url in enumerate(urls, 1):
+        if len(urls) == 1:
+            status_text = "🔄 Downloading from Instagram..."
+        else:
+            status_text = f"🔄 Queued {i}/{len(urls)} — Downloading from Instagram..."
+
+        status_msg = await update.message.reply_text(
+            status_text,
+            reply_to_message_id=update.message.message_id
+        )
+
+        await queue.put((update, context, url, status_msg))
+
+    if len(urls) > 1:
+        await update.message.reply_text(
+            f"✅ Queued {len(urls)} Instagram reels. They will be processed one by one with delay.",
+            reply_to_message_id=update.message.message_id
+        )
+
 
 # ---------- STARTUP ----------
 async def on_startup(app):
-    for _ in range(1):
+    for _ in range(1):   # 1 worker + 30s delay = safer for Instagram
         asyncio.create_task(worker())
+
 
 # ---------- MAIN ----------
 def main():
@@ -250,6 +282,7 @@ def main():
 
     logger.info("Bot started...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
