@@ -23,14 +23,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+TMP_PATH = tempfile.gettempdir()
 
 MAX_MEDIA_PER_MESSAGE = 5
 queue: asyncio.Queue = asyncio.Queue(maxsize=30)
 
 
+def get_file_size_mb(file_path: str) -> float:
+    try:
+        return os.path.getsize(file_path) / (1024 * 1024)
+    except:
+        return 0.0
+
 def get_cookies_file():
     """Returns Instagram cookies file (existing behavior)"""
-    path = "/tmp/cookies.txt"
+    path = f"{TMP_PATH}/cookies.txt"
     
     if os.path.exists(path) and os.path.getsize(path) > 10:
         return path
@@ -49,7 +56,7 @@ def get_cookies_file():
 
 def get_facebook_cookies_file():
     """Writes Facebook cookies from env var if provided"""
-    path = "/tmp/facebook_cookies.txt"
+    path = f"{TMP_PATH}/facebook_cookies.txt"
     
     if os.path.exists(path) and os.path.getsize(path) > 10:
         return path
@@ -161,7 +168,30 @@ async def download_media(url: str, temp_dir: str):
         return []
 
 
-def ensure_ios_compatible_video(input_path: str) -> str:
+def get_video_metadata(file_path: str):
+    """Use ffprobe to get width, height, and duration"""
+    try:
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-select_streams", "v:0", "-show_entries",
+            "stream=width,height,duration", file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        import json
+        data = json.loads(result.stdout)
+        
+        stream = data.get("streams", [{}])[0]
+        width = stream.get("width", 720)
+        height = stream.get("height", 1280)
+        duration = int(float(stream.get("duration", 0))) if stream.get("duration") else 0
+        
+        return width, height, duration
+    except Exception as e:
+        logger.warning(f"Failed to get metadata for {file_path}: {e}")
+        return 720, 1280, 0  # safe defaults for vertical video
+
+def compress_video(input_path: str) -> str:
     if not input_path.lower().endswith((".mp4", ".mov")):
         return input_path
 
@@ -171,12 +201,12 @@ def ensure_ios_compatible_video(input_path: str) -> str:
     cmd = [
         "ffmpeg", "-i", input_path,
         "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "28",
+        "-preset", "veryfast",
+        "-crf", "32",                    # Higher CRF = smaller size
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "96k",
         "-pix_fmt", "yuv420p",
-        "-vf", vf,
+        "-vf", "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
         "-movflags", "+faststart",
         "-threads", "2",
         "-y",
@@ -227,11 +257,19 @@ async def worker():
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.lower().endswith(".mp4"):
-                        file_path = ensure_ios_compatible_video(file_path)
+                        file_path = compress_video(file_path)
+                        size_mb = get_file_size_mb(file_path)
+                        width, height, duration = get_video_metadata(file_path)
                         await message.reply_video(
                             video=open(file_path, "rb"),
                             reply_to_message_id=message.message_id,
                             supports_streaming=True,
+                            width=width,
+                            height=height,
+                            duration=duration,
+                            read_timeout=300,
+                            write_timeout=300,
+                            connect_timeout=60,
                         )
                     else:
                         await message.reply_photo(
