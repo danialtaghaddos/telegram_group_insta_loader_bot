@@ -1,7 +1,6 @@
 # bot/downloaders.py
 import os, shutil, asyncio, subprocess, yt_dlp, tempfile
 
-from .utils import clean_facebook_url
 from .config import logger
 
 TMP_PATH = tempfile.gettempdir()
@@ -106,8 +105,6 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
 
 
 async def download_media(url: str, temp_dir: str):
-    url = clean_facebook_url(url)
-
     # Instagram: prefer gallery-dl
     if "instagram.com" in url:
         files = await download_with_gallery_dl(url, temp_dir)
