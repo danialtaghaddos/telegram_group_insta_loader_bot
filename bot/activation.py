@@ -5,7 +5,9 @@ from pathlib import Path
 
 from telegram import Update
 from telegram.ext import ContextTypes
+from .config import logger
 
+DEBUG = bool(os.getenv("DEBUG_BOT"))
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your Telegram numeric user ID
 DATA_FILE = "/data/activated_chats.json"
 
@@ -25,6 +27,8 @@ def is_admin(update: Update) -> bool:
     return update.effective_user and update.effective_user.id == ADMIN_USER_ID
 
 def is_activated(chat_id: int) -> bool:
+    if DEBUG:
+        return True
     return chat_id in ACTIVATED_CHATS
 
 async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):

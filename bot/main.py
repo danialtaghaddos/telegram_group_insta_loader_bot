@@ -9,6 +9,7 @@ from telegram.ext import (
     filters,
 )
 
+from .utils import extract_social_urls
 from .activation import activate, deactivate, is_activated
 from .config import BOT_TOKEN
 from .handlers import handle_message
@@ -22,11 +23,17 @@ async def on_startup(app):
 async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
+    if not update.message or not update.message.text:
+        return
+    
+    urls = extract_social_urls(update.message.text)
+    if not urls:
+        return
+    
     if not is_activated(chat_id):
         await update.message.reply_text("❌ Bot is not activated in this chat. ❌\nContact admin on www.mehreran.org")
         return
-
-    await handle_message(update, context)
+    await handle_message(urls, update, context)
 
 
 def main():

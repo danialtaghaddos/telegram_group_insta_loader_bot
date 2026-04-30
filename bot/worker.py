@@ -5,7 +5,9 @@ import tempfile
 
 from telegram import InputMediaPhoto, InputMediaVideo
 
-from .video import get_video_metadata
+from bot.utils import get_file_size_mb
+
+from .video import compress_video, get_video_metadata
 from .downloaders import download_media
 from .config import queue, logger
 
@@ -18,7 +20,7 @@ async def worker():
             platform = "Instagram" if "instagram.com" in url else "Facebook"
 
             try:
-                await status_msg.edit_text(f"🤖 I'm on it boss ...")
+                await status_msg.edit_text("🤖 I'm on in boss...")
             except:
                 pass
 
@@ -43,6 +45,15 @@ async def worker():
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.lower().endswith(".mp4"):
+                        size = get_file_size_mb(file_path)
+                        if size > 48:
+                            logger.info('File too big. Compressing...')
+                            try:
+                                await status_msg.edit_text(f"⚡ Processing ...")
+                            except:
+                                pass
+                            file_path = compress_video(file_path)
+
                         width, height, duration = get_video_metadata(file_path)
                         await message.reply_video(
                             video=open(file_path, "rb"),

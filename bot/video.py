@@ -24,3 +24,39 @@ def get_video_metadata(file_path: str):
     except Exception as e:
         logger.warning(f"Failed to get metadata for {file_path}: {e}")
         return 720, 1280, 0  # safe defaults for vertical video
+
+def compress_video(input_path: str) -> str:
+    if not input_path.lower().endswith((".mp4", ".mov")):
+        return input_path
+
+    output_path = os.path.splitext(input_path)[0] + "_ios.mp4"
+    vf = "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease"
+
+    cmd = [
+        "ffmpeg", "-i", input_path,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "32",                    # Higher CRF = smaller size
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-pix_fmt", "yuv420p",
+        "-vf", "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
+        "-movflags", "+faststart",
+        "-threads", "2",
+        "-y",
+        output_path
+    ]
+
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=90)
+        logger.info(f"✅ iOS re-encode succeeded: {output_path}")
+        if os.path.exists(input_path) and input_path != output_path:
+            os.unlink(input_path)
+        return output_path
+    except subprocess.TimeoutExpired:
+        logger.warning(f"ffmpeg timeout - skipping re-encode for {input_path}")
+        return input_path
+    except Exception as e:
+        logger.error(f"ffmpeg re-encode failed: {e}")
+        return input_path
+
