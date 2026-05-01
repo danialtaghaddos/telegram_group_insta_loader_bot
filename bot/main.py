@@ -16,7 +16,7 @@ from .handlers import handle_message
 from .worker import worker
 
 async def on_startup(app):
-    for _ in range(2):
+    for _ in range(3):
         asyncio.create_task(worker())
 
 

@@ -45,14 +45,11 @@ async def worker():
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.lower().endswith(".mp4"):
-                        size = get_file_size_mb(file_path)
-                        if size > 48:
-                            logger.info('File too big. Compressing...')
-                            try:
-                                await status_msg.edit_text(f"⚡ Processing ...")
-                            except:
-                                pass
-                            file_path = compress_video(file_path)
+                        try:
+                            await status_msg.edit_text(f"⚡ Processing ...")
+                        except:
+                            pass
+                        file_path = compress_video(file_path)
 
                         width, height, duration = get_video_metadata(file_path)
                         await message.reply_video(
@@ -75,6 +72,7 @@ async def worker():
                     media_group = []
                     for f in files[:10]:
                         if f.lower().endswith(".mp4"):
+                            f = compress_video(f)
                             media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             media_group.append(InputMediaPhoto(open(f, "rb")))
