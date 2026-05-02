@@ -363,8 +363,8 @@ async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def enable_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /enable command - admin enables access requests."""
+async def access_enabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /access_enabled command - admin enables access requests."""
     if not is_admin(update):
         await update.message.reply_text("❌ Only admin can use this command.")
         return
@@ -378,8 +378,8 @@ async def enable_requests_command(update: Update, context: ContextTypes.DEFAULT_
     )
 
 
-async def disable_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /disable command - admin disables access requests."""
+async def access_disabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /access_disabled command - admin disables access requests."""
     if not is_admin(update):
         await update.message.reply_text("❌ Only admin can use this command.")
         return
@@ -495,11 +495,10 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception as e:
                 logger.error(f"Failed to notify new moderator: {e}")
         else:
-            # No chat assigned - moderator has access but no initial chats
-            # They can request access to specific chats or be assigned later
+            # No chat assigned - moderator has global access
             await update.message.reply_text(
-                f"✅ User @{username} (ID: `{user_id}`) has been added as a moderator with no initial chat assignments.\n\n"
-                f"They can use /access to request access to specific chats, or you can use /addmod @username <chat_id> to assign chats.",
+                f"✅ User @{username} (ID: `{user_id}`) has been added as a moderator with global access.\n\n"
+                f"They can now activate the bot in any chat they are a member of.",
                 parse_mode="Markdown"
             )
             
@@ -509,10 +508,14 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
                     chat_id=user_id,
                     text=(
                         f"🎉 **You have been added as a moderator!**\n\n"
-                        f"You currently have no chat assignments. You can:\n"
-                        f"1. Use /access in a group to request access\n"
-                        f"2. Ask admin to assign you to specific chats\n\n"
+                        f"You now have moderator access. You can:\n"
+                        f"• Activate the bot in any chat you are a member of\n"
+                        f"• Use /activate in any group to enable the bot\n"
+                        f"• Use /doorman to toggle join/leave message cleanup (bot must be admin in that chat)\n\n"
                         "Available commands:\n"
+                        "/activate - Activate bot for current chat\n"
+                        "/deactivate - Deactivate bot for current chat\n"
+                        "/doorman - Toggle doorman mode\n"
                         "/myChats - List chats you control\n"
                         "/help - Show all available commands"
                     ),
@@ -524,7 +527,12 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"Failed to resolve username @{username}: {e}")
         await update.message.reply_text(
-            f"❌ Could not find user @{username}. Make sure the username is correct and the user has interacted with the bot."
+            f"❌ Could not find user @{username}. This usually means:\n"
+            f"1. The username is incorrect\n"
+            f"2. The user has never interacted with this bot\n\n"
+            f"**Workaround:** Ask the user to run `/access` or `/start` first, then try again.\n"
+            f"Or use `/addmod <user_id> [chat_id]` if you know their numeric Telegram ID.",
+            parse_mode="Markdown"
         )
 
 
@@ -693,16 +701,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "/approve <user_id> - Approve moderator access request\n"
         text += "/deny <user_id> - Deny moderator access request\n"
         text += "/requests - View pending access requests\n"
-        text += "/enable - Enable access requests\n"
-        text += "/disable - Disable access requests\n"
-        text += "/addmod @username [chat_id] - Add moderator manually\n"
-        text += "/removemod @username [chat_id] - Remove moderator\n\n"
+        text += "/access_enabled - Enable access requests\n"
+        text += "/access_disabled - Disable access requests\n"
+        text += "/addmod @username - Add moderator manually\n"
+        text += "/removemod @username - Remove moderator\n\n"
     elif is_mod:
         text += "**Moderator Commands:**\n"
-        text += "/activate - Activate bot for current chat (your chats only)\n"
-        text += "/deactivate - Deactivate bot for current chat (your chats only)\n"
-        text += "/doorman - Toggle doorman mode (your chats only)\n"
-        text += "/myChats - List chats you control\n"
+        text += "/activate - Activate bot for current chat\n"
+        text += "/deactivate - Deactivate bot for current chat\n"
+        text += "/doorman - Toggle doorman mode\n"
+        text += "/myChats - List chats you moderate\n"
         text += "/help - Show this help message\n\n"
     else:
         text += "**Available Commands:**\n"

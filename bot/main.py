@@ -15,8 +15,8 @@ from .moderators import (
     access_command,
     approve_command,
     deny_command,
-    enable_requests_command,
-    disable_requests_command,
+    access_enabled_command,
+    access_disabled_command,
     add_moderator_command,
     remove_moderator_command,
     list_requests_command,
@@ -63,8 +63,8 @@ def main():
     app.add_handler(CommandHandler("access", access_command))
     app.add_handler(CommandHandler("approve", approve_command))
     app.add_handler(CommandHandler("deny", deny_command))
-    app.add_handler(CommandHandler("enable", enable_requests_command))
-    app.add_handler(CommandHandler("disable", disable_requests_command))
+    app.add_handler(CommandHandler("access_enabled", access_enabled_command))
+    app.add_handler(CommandHandler("access_disabled", access_disabled_command))
 
     # Moderator management commands (admin)
     app.add_handler(CommandHandler("addmod", add_moderator_command))

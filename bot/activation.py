@@ -42,12 +42,15 @@ def is_admin(update: Update) -> bool:
     return update.effective_user and update.effective_user.id == ADMIN_USER_ID
 
 
-def can_moderate_chat(update: Update, chat_id: int) -> bool:
-    """Check if user can moderate this chat (admin or moderator)."""
+def can_moderate_chat(update: Update) -> bool:
+    """Check if user can moderate (admin or moderator)."""
     if is_admin(update):
         return True
     if update.effective_user:
-        return is_moderator(update.effective_user.id, chat_id)
+        # Check if user is a moderator (can moderate chat)
+        from .moderators import moderators
+        if update.effective_user.id in moderators:
+            return True
     return False
 
 def is_activated(chat_id: int) -> bool:
@@ -58,8 +61,8 @@ def is_activated(chat_id: int) -> bool:
 async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    if not can_moderate_chat(update, chat_id):
-        await update.message.reply_text("❌ You don't have permission to activate the bot in this chat.")
+    if not can_moderate_chat(update):
+        await update.message.reply_text("❌ You don't have permission to activate the bot.")
         return
 
     ACTIVATED_CHATS.add(chat_id)
@@ -70,8 +73,8 @@ async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    if not can_moderate_chat(update, chat_id):
-        await update.message.reply_text("❌ You don't have permission to deactivate the bot in this chat.")
+    if not can_moderate_chat(update):
+        await update.message.reply_text("❌ You don't have permission to deactivate the bot.")
         return
 
     ACTIVATED_CHATS.discard(chat_id)
@@ -120,8 +123,8 @@ async def doorman(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle doorman mode for the current chat - auto-deletes join/leave system messages."""
     chat_id = update.effective_chat.id
     
-    if not can_moderate_chat(update, chat_id):
-        await update.message.reply_text("❌ You don't have permission to manage doorman in this chat.")
+    if not can_moderate_chat(update):
+        await update.message.reply_text("❌ You don't have permission to manage doorman.")
         return
     
     if chat_id in DOORMAN_CHATS:
