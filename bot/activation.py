@@ -74,18 +74,26 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     urls = []
     for chat_id in sorted(ACTIVATED_CHATS):
-        # Convert private chat IDs (e.g., -100123456789) to t.me URLs
-        chat_id_str = str(chat_id)
-        if chat_id_str.startswith("-100"):
-            # Private supergroup/channel
-            url = f"https://t.me/c/{chat_id_str[4:]}"
-        elif chat_id < 0:
-            # Regular group (negative ID without -100 prefix)
-            url = f"https://t.me/c/{chat_id_str[1:]}"
+        try:
+            # Try to get chat info to find username
+            chat = await context.bot.get_chat(chat_id)
+            if chat.username:
+                # Public chat with username
+                url = f"https://t.me/{chat.username}"
+            elif chat.type in [chat.type.PRIVATE, chat.type.SENDER]:
+                # Private user chat - use tg:// link
+                url = f"tg://user?id={chat_id}"
+            else:
+                # Private group/channel - no public URL available
+                url = None
+        except Exception as e:
+            logger.debug(f"Failed to get chat info for {chat_id}: {e}")
+            url = None
+
+        if url:
+            urls.append(f"{url} (ID: {chat_id})")
         else:
-            # Private user chat
-            url = f"https://t.me/{chat_id_str}"
-        urls.append(f"{url} (ID: {chat_id})")
+            urls.append(f"No public URL (ID: {chat_id})")
 
     await update.message.reply_text("Activated chats:\n" + "\n".join(urls))
 
