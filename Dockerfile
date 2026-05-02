@@ -7,4 +7,4 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN apt-get update && apt-get install -y ffmpeg
 
-CMD ["python", "bot.py"]
+CMD ["python", "-m", "bot.main"]
