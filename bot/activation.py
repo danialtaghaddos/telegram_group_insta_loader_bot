@@ -1,4 +1,3 @@
-
 import json
 import os
 from pathlib import Path
@@ -11,6 +10,9 @@ DEBUG = bool(os.getenv("DEBUG_BOT"))
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your Telegram numeric user ID
 DATA_FILE = "/data/activated_chats.json"
 DOORMAN_FILE = "/data/doorman_chats.json"
+
+# Import moderator functions
+from .moderators import is_admin as check_is_admin, is_moderator, get_moderated_chats
 
 def load_activated_chats() -> set[int]:
     if not os.path.exists(DATA_FILE):
@@ -36,7 +38,17 @@ ACTIVATED_CHATS: set[int] = load_activated_chats()
 DOORMAN_CHATS: set[int] = load_doorman_chats()
 
 def is_admin(update: Update) -> bool:
+    """Check if user is admin (kept for backward compatibility)."""
     return update.effective_user and update.effective_user.id == ADMIN_USER_ID
+
+
+def can_moderate_chat(update: Update, chat_id: int) -> bool:
+    """Check if user can moderate this chat (admin or moderator)."""
+    if is_admin(update):
+        return True
+    if update.effective_user:
+        return is_moderator(update.effective_user.id, chat_id)
+    return False
 
 def is_activated(chat_id: int) -> bool:
     if DEBUG:
@@ -44,20 +56,24 @@ def is_activated(chat_id: int) -> bool:
     return chat_id in ACTIVATED_CHATS
 
 async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
+    chat_id = update.effective_chat.id
+    
+    if not can_moderate_chat(update, chat_id):
+        await update.message.reply_text("❌ You don't have permission to activate the bot in this chat.")
         return
 
-    chat_id = update.effective_chat.id
     ACTIVATED_CHATS.add(chat_id)
     save_activated_chats(ACTIVATED_CHATS)
 
     await update.message.reply_text("✅ Bot activated for this chat.")
 
 async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update):
+    chat_id = update.effective_chat.id
+    
+    if not can_moderate_chat(update, chat_id):
+        await update.message.reply_text("❌ You don't have permission to deactivate the bot in this chat.")
         return
 
-    chat_id = update.effective_chat.id
     ACTIVATED_CHATS.discard(chat_id)
     save_activated_chats(ACTIVATED_CHATS)
 
@@ -65,7 +81,9 @@ async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all activated chats (admin only)."""
     if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
         return
 
     if not ACTIVATED_CHATS:
@@ -100,10 +118,11 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def doorman(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle doorman mode for the current chat - auto-deletes join/leave system messages."""
-    if not is_admin(update):
-        return
-
     chat_id = update.effective_chat.id
+    
+    if not can_moderate_chat(update, chat_id):
+        await update.message.reply_text("❌ You don't have permission to manage doorman in this chat.")
+        return
     
     if chat_id in DOORMAN_CHATS:
         DOORMAN_CHATS.discard(chat_id)

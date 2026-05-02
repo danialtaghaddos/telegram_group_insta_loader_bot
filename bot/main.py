@@ -11,6 +11,18 @@ from telegram.ext import (
 
 from .utils import extract_social_urls
 from .activation import activate, deactivate, list_chats, doorman, doorman_message_handler, is_activated
+from .moderators import (
+    access_command,
+    approve_command,
+    deny_command,
+    enable_requests_command,
+    disable_requests_command,
+    add_moderator_command,
+    remove_moderator_command,
+    list_requests_command,
+    my_chats_command,
+    help_command,
+)
 from .config import BOT_TOKEN
 from .handlers import handle_message
 from .worker import worker
@@ -39,11 +51,31 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
 
-
+    # Core bot commands (activate/deactivate/doorman) - now with moderator support
     app.add_handler(CommandHandler("activate", activate))
     app.add_handler(CommandHandler("deactivate", deactivate))
-    app.add_handler(CommandHandler("listChats", list_chats))
     app.add_handler(CommandHandler("doorman", doorman))
+
+    # Admin-only commands
+    app.add_handler(CommandHandler("listChats", list_chats))
+
+    # Moderator access request commands
+    app.add_handler(CommandHandler("access", access_command))
+    app.add_handler(CommandHandler("approve", approve_command))
+    app.add_handler(CommandHandler("deny", deny_command))
+    app.add_handler(CommandHandler("enable", enable_requests_command))
+    app.add_handler(CommandHandler("disable", disable_requests_command))
+
+    # Moderator management commands (admin)
+    app.add_handler(CommandHandler("addmod", add_moderator_command))
+    app.add_handler(CommandHandler("removemod", remove_moderator_command))
+    app.add_handler(CommandHandler("requests", list_requests_command))
+
+    # Moderator info commands
+    app.add_handler(CommandHandler("myChats", my_chats_command))
+
+    # Help command
+    app.add_handler(CommandHandler("help", help_command))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

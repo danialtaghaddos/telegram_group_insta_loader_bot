@@ -1,0 +1,717 @@
+# bot/moderators.py
+"""
+Moderator management system for the Telegram bot.
+Handles moderator permissions, access requests, and related commands.
+"""
+
+import json
+import os
+import re
+from typing import Optional
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from .config import logger
+
+# File paths for data persistence
+MODERATORS_FILE = "/data/moderators.json"
+ACCESS_REQUESTS_FILE = "/data/access_requests.json"
+SETTINGS_FILE = "/data/settings.json"
+
+# In-memory storage
+moderators: dict[int, set[int]] = {}  # {moderator_user_id: {chat_id, ...}}
+access_requests: list[dict] = []  # [{user_id, username, first_name, last_name, status}, ...]
+settings: dict = {"access_requests_enabled": True}
+
+
+def load_moderators() -> dict[int, set[int]]:
+    """Load moderators from file."""
+    if not os.path.exists(MODERATORS_FILE):
+        return {}
+    try:
+        with open(MODERATORS_FILE, "r") as f:
+            data = json.load(f)
+            # Convert to {user_id: set(chat_ids)}
+            return {int(uid): set(chats) for uid, chats in data.items()}
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to load moderators: {e}")
+        return {}
+
+
+def save_moderators() -> None:
+    """Save moderators to file."""
+    # Convert sets to lists for JSON serialization
+    data = {str(uid): list(chats) for uid, chats in moderators.items()}
+    with open(MODERATORS_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def load_access_requests() -> list[dict]:
+    """Load access requests from file."""
+    if not os.path.exists(ACCESS_REQUESTS_FILE):
+        return []
+    try:
+        with open(ACCESS_REQUESTS_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to load access requests: {e}")
+        return []
+
+
+def save_access_requests() -> None:
+    """Save access requests to file."""
+    with open(ACCESS_REQUESTS_FILE, "w") as f:
+        json.dump(access_requests, f)
+
+
+def load_settings() -> dict:
+    """Load settings from file."""
+    if not os.path.exists(SETTINGS_FILE):
+        return {"access_requests_enabled": True}
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to load settings: {e}")
+        return {"access_requests_enabled": True}
+
+
+def save_settings() -> None:
+    """Save settings to file."""
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f)
+
+
+# Initialize storage from files
+moderators = load_moderators()
+access_requests = load_access_requests()
+settings = load_settings()
+
+
+def is_admin(update: Update) -> bool:
+    """Check if the user is the bot admin."""
+    from .config import os
+    admin_id = os.getenv("ADMIN_USER_ID")
+    if not admin_id:
+        return False
+    return update.effective_user and update.effective_user.id == int(admin_id)
+
+
+def is_moderator(user_id: int, chat_id: int) -> bool:
+    """Check if a user is a moderator for a specific chat."""
+    if user_id in moderators:
+        return chat_id in moderators[user_id]
+    return False
+
+
+def get_moderated_chats(user_id: int) -> set[int]:
+    """Get all chats a user is moderator of."""
+    return moderators.get(user_id, set())
+
+
+def add_moderator(user_id: int, chat_id: int) -> None:
+    """Add a user as moderator for a specific chat."""
+    if user_id not in moderators:
+        moderators[user_id] = set()
+    moderators[user_id].add(chat_id)
+    save_moderators()
+
+
+def remove_moderator(user_id: int, chat_id: int) -> None:
+    """Remove a user as moderator for a specific chat."""
+    if user_id in moderators:
+        moderators[user_id].discard(chat_id)
+        if not moderators[user_id]:
+            del moderators[user_id]
+        save_moderators()
+
+
+def remove_all_moderator_roles(user_id: int) -> None:
+    """Remove all moderator roles for a user."""
+    if user_id in moderators:
+        del moderators[user_id]
+        save_moderators()
+
+
+def has_pending_request(user_id: int) -> bool:
+    """Check if a user has a pending access request."""
+    return any(
+        req["user_id"] == user_id and req["status"] == "pending"
+        for req in access_requests
+    )
+
+
+def create_access_request(user_id: int, username: Optional[str], first_name: str, last_name: Optional[str]) -> bool:
+    """Create a new access request."""
+    if has_pending_request(user_id):
+        return False
+    
+    request = {
+        "user_id": user_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "status": "pending"
+    }
+    access_requests.append(request)
+    save_access_requests()
+    return True
+
+
+def get_pending_requests() -> list[dict]:
+    """Get all pending access requests."""
+    return [req for req in access_requests if req["status"] == "pending"]
+
+
+def approve_request(user_id: int, chat_id: int) -> bool:
+    """Approve an access request and add user as moderator for the chat where command was issued."""
+    for req in access_requests:
+        if req["user_id"] == user_id and req["status"] == "pending":
+            req["status"] = "approved"
+            # Add as moderator for the chat where approve command was used
+            add_moderator(user_id, chat_id)
+            save_access_requests()
+            return True
+    return False
+
+
+def deny_request(user_id: int) -> bool:
+    """Deny an access request."""
+    for req in access_requests:
+        if req["user_id"] == user_id and req["status"] == "pending":
+            req["status"] = "denied"
+            save_access_requests()
+            return True
+    return False
+
+
+# Command handlers
+
+async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /access command - users request moderator access."""
+    if not update.effective_user:
+        return
+    
+    if not settings.get("access_requests_enabled", True):
+        await update.message.reply_text(
+            "❌ Access requests are currently disabled. Contact the admin for moderator access."
+        )
+        return
+    
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    first_name = update.effective_user.first_name or "Unknown"
+    last_name = update.effective_user.last_name
+    
+    # Check if already a moderator
+    if user_id in moderators and moderators[user_id]:
+        await update.message.reply_text(
+            "✅ You are already a moderator! You can use /help to see your available commands."
+        )
+        return
+    
+    # Check for pending request
+    if has_pending_request(user_id):
+        await update.message.reply_text(
+            "⏳ You already have a pending access request. Please wait for admin approval."
+        )
+        return
+    
+    # Create access request
+    create_access_request(user_id, username, first_name, last_name)
+    
+    await update.message.reply_text(
+        "✅ Your access request has been submitted! You will be notified once the admin reviews it."
+    )
+    
+    # Notify admin
+    await notify_admin_of_request(update, context, user_id, username, first_name, last_name)
+
+
+async def notify_admin_of_request(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                   user_id: int, username: Optional[str], 
+                                   first_name: str, last_name: Optional[str]):
+    """Send notification to admin about new access request."""
+    from .config import os
+    admin_id = os.getenv("ADMIN_USER_ID")
+    if not admin_id:
+        return
+    
+    name = first_name
+    if last_name:
+        name += f" {last_name}"
+    if username:
+        name += f" (@{username})"
+    
+    try:
+        await context.bot.send_message(
+            chat_id=int(admin_id),
+            text=(
+                f"🔔 **New Moderator Access Request**\n\n"
+                f"👤 User: {name}\n"
+                f"🆔 User ID: `{user_id}`\n\n"
+                f"Use /approve to grant access or /deny to reject."
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify admin: {e}")
+
+
+async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /approve command - admin approves access request."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    # Check if replying to a message or if user_id is provided
+    user_id = None
+    
+    if update.message.reply_to_message:
+        # Try to extract user_id from the original request notification
+        reply_text = update.message.reply_to_message.text
+        if reply_text:
+            # Look for User ID in the message
+            match = re.search(r'User ID: `(\d+)`', reply_text)
+            if match:
+                user_id = int(match.group(1))
+    
+    if not user_id and context.args:
+        try:
+            user_id = int(context.args[0])
+        except ValueError:
+            pass
+    
+    if not user_id:
+        await update.message.reply_text(
+            "❌ Please reply to the access request message or provide user ID.\n"
+            "Usage: /approve <user_id> or reply to request message"
+        )
+        return
+    
+    chat_id = update.effective_chat.id
+    if approve_request(user_id, chat_id):
+        await update.message.reply_text(f"✅ User {user_id} has been approved as moderator for this chat!")
+        
+        # Notify the approved user
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎉 **Your moderator access has been approved!**\n\n"
+                    "You can now activate/deactivate the bot in your chats and manage doorman settings.\n\n"
+                    "Available commands:\n"
+                    "/activate - Activate bot for current chat\n"
+                    "/deactivate - Deactivate bot for current chat\n"
+                    "/doorman - Toggle doorman mode (auto-delete join/leave messages)\n"
+                    "/myChats - List chats you control\n"
+                    "/help - Show all available commands"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify approved user: {e}")
+    else:
+        await update.message.reply_text(
+            f"❌ No pending request found for user {user_id}."
+        )
+
+
+async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /deny command - admin denies access request."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    user_id = None
+    
+    if update.message.reply_to_message:
+        reply_text = update.message.reply_to_message.text
+        if reply_text:
+            match = re.search(r'User ID: `(\d+)`', reply_text)
+            if match:
+                user_id = int(match.group(1))
+    
+    if not user_id and context.args:
+        try:
+            user_id = int(context.args[0])
+        except ValueError:
+            pass
+    
+    if not user_id:
+        await update.message.reply_text(
+            "❌ Please reply to the access request message or provide user ID.\n"
+            "Usage: /deny <user_id> or reply to request message"
+        )
+        return
+    
+    if deny_request(user_id):
+        await update.message.reply_text(f"⛔ Access request from user {user_id} has been denied.")
+        
+        # Notify the denied user
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ Your moderator access request has been denied by the admin."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify denied user: {e}")
+    else:
+        await update.message.reply_text(
+            f"❌ No pending request found for user {user_id}."
+        )
+
+
+async def enable_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /enable command - admin enables access requests."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    settings["access_requests_enabled"] = True
+    save_settings()
+    
+    await update.message.reply_text(
+        "✅ Access requests are now **enabled**. Users can use /access to request moderator access.",
+        parse_mode="Markdown"
+    )
+
+
+async def disable_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /disable command - admin disables access requests."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    settings["access_requests_enabled"] = False
+    save_settings()
+    
+    await update.message.reply_text(
+        "⛔ Access requests are now **disabled**. Users cannot request moderator access.",
+        parse_mode="Markdown"
+    )
+
+
+async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /addmod command - admin adds moderator manually by username."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "❌ Please provide a username.\n"
+            "Usage: /addmod @username [chat_id]\n\n"
+            "If chat_id is not provided and command is used in a group, that group will be used. "
+            "If used in private chat with bot, the moderator will have no initial chat assignments."
+        )
+        return
+    
+    username = context.args[0]
+    if username.startswith('@'):
+        username = username[1:]
+    
+    # Get chat_id - either from args or current chat
+    chat_id = None
+    chat_id_provided = False
+    if len(context.args) > 1:
+        try:
+            chat_id = int(context.args[1])
+            chat_id_provided = True
+        except ValueError:
+            await update.message.reply_text("❌ Invalid chat_id provided.")
+            return
+    else:
+        # No chat_id provided - check if we're in a group or private chat
+        current_chat_id = update.effective_chat.id
+        # Private chats have positive IDs that are the same as user ID
+        # Groups have negative IDs
+        if current_chat_id > 0:
+            # This is a private chat (likely admin's DM with bot)
+            # Don't assign any initial chat - moderator will have no chats initially
+            chat_id = None
+        else:
+            # This is a group/superchannel
+            chat_id = current_chat_id
+    
+    # Try to get user by username
+    try:
+        # Resolve the username to get user
+        chat = await context.bot.get_chat(f"@{username}")
+        user_id = chat.id
+        
+        # Check if moderator is in the target group (if chat_id was provided or detected)
+        if chat_id is not None:
+            try:
+                # Try to get chat member to verify the user is in the group
+                member = await context.bot.get_chat_member(chat_id, user_id)
+                # If user left or was kicked, they won't be a member
+                if member.status in ['left', 'kicked']:
+                    # Warn admin via private message
+                    from .config import os
+                    admin_id = os.getenv("ADMIN_USER_ID")
+                    if admin_id:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=int(admin_id),
+                                text=(
+                                    f"⚠️ **Warning:** User @{username} (ID: `{user_id}`) is not a member of chat ID `{chat_id}`.\n\n"
+                                    f"Their status in the chat: `{member.status}`.\n"
+                                    f"They will not be able to activate the bot there until they join."
+                                ),
+                                parse_mode="Markdown"
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send warning to admin: {e}")
+            except Exception as e:
+                # Could not check membership - log but continue
+                logger.debug(f"Could not verify membership for user {user_id} in chat {chat_id}: {e}")
+        
+        # Add as moderator (only if chat_id is not None)
+        if chat_id is not None:
+            add_moderator(user_id, chat_id)
+            await update.message.reply_text(
+                f"✅ User @{username} (ID: `{user_id}`) has been added as moderator for chat ID: `{chat_id}`.",
+                parse_mode="Markdown"
+            )
+            
+            # Notify the new moderator
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"🎉 **You have been added as a moderator!**\n\n"
+                        f"You can now manage the bot in chat ID: `{chat_id}`\n\n"
+                        "Available commands:\n"
+                        "/activate - Activate bot for current chat\n"
+                        "/deactivate - Deactivate bot for current chat\n"
+                        "/doorman - Toggle doorman mode (removes enter/leave messeages)\n"
+                        "/myChats - List chats you control\n"
+                        "/help - Show all available commands"
+                    ),
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify new moderator: {e}")
+        else:
+            # No chat assigned - moderator has access but no initial chats
+            # They can request access to specific chats or be assigned later
+            await update.message.reply_text(
+                f"✅ User @{username} (ID: `{user_id}`) has been added as a moderator with no initial chat assignments.\n\n"
+                f"They can use /access to request access to specific chats, or you can use /addmod @username <chat_id> to assign chats.",
+                parse_mode="Markdown"
+            )
+            
+            # Notify the new moderator
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"🎉 **You have been added as a moderator!**\n\n"
+                        f"You currently have no chat assignments. You can:\n"
+                        f"1. Use /access in a group to request access\n"
+                        f"2. Ask admin to assign you to specific chats\n\n"
+                        "Available commands:\n"
+                        "/myChats - List chats you control\n"
+                        "/help - Show all available commands"
+                    ),
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify new moderator: {e}")
+            
+    except Exception as e:
+        logger.error(f"Failed to resolve username @{username}: {e}")
+        await update.message.reply_text(
+            f"❌ Could not find user @{username}. Make sure the username is correct and the user has interacted with the bot."
+        )
+
+
+async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /removemod command - admin removes moderator."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "❌ Please provide a username.\n"
+            "Usage: /removemod @username [chat_id]\n\n"
+            "If chat_id is not provided and command is used in a group, moderator will be removed from that group. "
+            "If used in private chat with bot, all moderator roles will be removed."
+        )
+        return
+    
+    username = context.args[0]
+    if username.startswith('@'):
+        username = username[1:]
+    
+    # Get chat_id - either from args or current chat
+    chat_id = None
+    if len(context.args) > 1:
+        try:
+            chat_id = int(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid chat_id provided.")
+            return
+    else:
+        # No chat_id provided - check if we're in a group or private chat
+        current_chat_id = update.effective_chat.id
+        # Private chats have positive IDs that are the same as user ID
+        # Groups have negative IDs
+        if current_chat_id > 0:
+            # This is a private chat (likely admin's DM with bot)
+            # Remove all moderator roles
+            chat_id = None
+        else:
+            # This is a group/superchannel - remove from this group
+            chat_id = current_chat_id
+    
+    # Try to get user by username
+    try:
+        # Resolve the username to get user
+        chat = await context.bot.get_chat(f"@{username}")
+        user_id = chat.id
+        
+        if chat_id is not None:
+            remove_moderator(user_id, chat_id)
+            await update.message.reply_text(
+                f"✅ User @{username} (ID: `{user_id}`) has been removed as moderator for chat ID: `{chat_id}`.",
+                parse_mode="Markdown"
+            )
+        else:
+            remove_all_moderator_roles(user_id)
+            await update.message.reply_text(
+                f"✅ All moderator roles for user @{username} (ID: `{user_id}`) have been removed.",
+                parse_mode="Markdown"
+            )
+        
+        # Notify the removed moderator
+        try:
+            if chat_id is not None:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"⚠️ **Moderator Update**\n\n"
+                        f"You have been removed as moderator for chat ID: `{chat_id}`."
+                    ),
+                    parse_mode="Markdown"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"⚠️ **Moderator Update**\n\n"
+                        f"All your moderator roles have been removed by the admin."
+                    ),
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            logger.error(f"Failed to notify removed moderator: {e}")
+            
+    except Exception as e:
+        logger.error(f"Failed to resolve username @{username}: {e}")
+        await update.message.reply_text(
+            f"❌ Could not find user @{username}. Make sure the username is correct and the user has interacted with the bot."
+        )
+
+
+async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /requests command - admin views pending requests."""
+    if not is_admin(update):
+        await update.message.reply_text("❌ Only admin can use this command.")
+        return
+    
+    pending = get_pending_requests()
+    
+    if not pending:
+        await update.message.reply_text("✅ No pending access requests.")
+        return
+    
+    text = "📋 **Pending Access Requests:**\n\n"
+    for req in pending:
+        name = req["first_name"]
+        if req.get("last_name"):
+            name += f" {req['last_name']}"
+        if req.get("username"):
+            name += f" (@{req['username']})"
+        
+        text += f"👤 {name} (ID: `{req['user_id']}`)\n"
+    
+    text += "\nUse /approve <user_id> or /deny <user_id>"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def my_chats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /myChats command - moderators view their controlled chats."""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    chats = get_moderated_chats(user_id)
+    
+    if not chats:
+        # Check if admin
+        if is_admin(update):
+            await update.message.reply_text(
+                "As admin, you have access to all chats. Use /listChats to see all activated chats."
+            )
+        else:
+            await update.message.reply_text(
+                "❌ You are not a moderator. Use /access to request moderator access."
+            )
+        return
+    
+    text = "✅ **Your moderated chats:**\n\n"
+    for chat_id in sorted(chats):
+        text += f"🔹 Chat ID: `{chat_id}`\n"
+    
+    text += "\nUse /activate or /deactivate in those chats to control the bot."
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command - show available commands."""
+    if not update.effective_user:
+        return
+    
+    user_id = update.effective_user.id
+    is_mod = user_id in moderators and moderators[user_id]
+    admin = is_admin(update)
+    
+    text = "🤖 **Bot Commands Help**\n\n"
+    
+    if admin:
+        text += "**Admin Commands:**\n"
+        text += "/activate - Activate bot for current chat\n"
+        text += "/deactivate - Deactivate bot for current chat\n"
+        text += "/doorman - Toggle doorman mode (auto-delete join/leave messages)\n"
+        text += "/listChats - List all activated chats\n"
+        text += "/approve <user_id> - Approve moderator access request\n"
+        text += "/deny <user_id> - Deny moderator access request\n"
+        text += "/requests - View pending access requests\n"
+        text += "/enable - Enable access requests\n"
+        text += "/disable - Disable access requests\n"
+        text += "/addmod @username [chat_id] - Add moderator manually\n"
+        text += "/removemod @username [chat_id] - Remove moderator\n\n"
+    elif is_mod:
+        text += "**Moderator Commands:**\n"
+        text += "/activate - Activate bot for current chat (your chats only)\n"
+        text += "/deactivate - Deactivate bot for current chat (your chats only)\n"
+        text += "/doorman - Toggle doorman mode (your chats only)\n"
+        text += "/myChats - List chats you control\n"
+        text += "/help - Show this help message\n\n"
+    else:
+        text += "**Available Commands:**\n"
+        text += "/access - Request moderator access\n"
+        text += "/help - Show this help message\n\n"
+    
+    text += "**Bot Description:**\n"
+    text += "This bot downloads and shares Instagram/Facebook media in Telegram chats.\n"
+    text += "Moderators can activate the bot in their chats and manage doorman settings.\n"
+    text += "Simply send Instagram/Facebook links in an activated chat to download media."
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
