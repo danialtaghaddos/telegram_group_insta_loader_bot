@@ -10,6 +10,7 @@ DEBUG = bool(os.getenv("DEBUG_BOT"))
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your Telegram numeric user ID
 DATA_FILE = "/data/activated_chats.json"
 DOORMAN_FILE = "/data/doorman_chats.json"
+SILENT_FILE = "/data/silent_chats.json"
 
 # Import moderator functions
 from .moderators import is_admin as check_is_admin, is_moderator
@@ -34,8 +35,19 @@ def save_doorman_chats(chats: set[int]) -> None:
     with open(DOORMAN_FILE, "w") as f:
         json.dump(list(chats), f)
 
+def load_silent_chats() -> set[int]:
+    if not os.path.exists(SILENT_FILE):
+        return set()
+    with open(SILENT_FILE, "r") as f:
+        return set(json.load(f))
+
+def save_silent_chats(chats: set[int]) -> None:
+    with open(SILENT_FILE, "w") as f:
+        json.dump(list(chats), f)
+
 ACTIVATED_CHATS: set[int] = load_activated_chats()
 DOORMAN_CHATS: set[int] = load_doorman_chats()
+SILENT_CHATS: set[int] = load_silent_chats()
 
 def is_admin(update: Update) -> bool:
     """Check if user is admin (kept for backward compatibility)."""
@@ -62,7 +74,8 @@ async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
     if not can_moderate_chat(update):
-        await update.message.reply_text("❌ You don't have permission to activate the bot.")
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ You don't have permission to activate the bot.")
         return
 
     ACTIVATED_CHATS.add(chat_id)
@@ -74,7 +87,8 @@ async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
     if not can_moderate_chat(update):
-        await update.message.reply_text("❌ You don't have permission to deactivate the bot.")
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ You don't have permission to deactivate the bot.")
         return
 
     ACTIVATED_CHATS.discard(chat_id)
@@ -86,7 +100,8 @@ async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all activated chats (admin only)."""
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
 
     if not ACTIVATED_CHATS:
@@ -130,11 +145,12 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def doorman(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle doorman mode for the current chat - auto-deletes join/leave system messages."""
     chat_id = update.effective_chat.id
-    
+
     if not can_moderate_chat(update):
-        await update.message.reply_text("❌ You don't have permission to manage doorman.")
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ You don't have permission to manage doorman.")
         return
-    
+
     if chat_id in DOORMAN_CHATS:
         DOORMAN_CHATS.discard(chat_id)
         save_doorman_chats(DOORMAN_CHATS)
@@ -143,6 +159,24 @@ async def doorman(update: Update, context: ContextTypes.DEFAULT_TYPE):
         DOORMAN_CHATS.add(chat_id)
         save_doorman_chats(DOORMAN_CHATS)
         await update.message.reply_text("🚪 Doorman activated for this chat. System messages (join/leave) will be auto-deleted.")
+
+
+async def silent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle silent mode for the current chat - disables permission error messages."""
+    chat_id = update.effective_chat.id
+
+    if not can_moderate_chat(update):
+        await update.message.reply_text("❌ You don't have permission to manage silent mode.")
+        return
+
+    if chat_id in SILENT_CHATS:
+        SILENT_CHATS.discard(chat_id)
+        save_silent_chats(SILENT_CHATS)
+        await update.message.reply_text("🔊 Silent mode deactivated for this chat. Permission error messages will be shown.")
+    else:
+        SILENT_CHATS.add(chat_id)
+        save_silent_chats(SILENT_CHATS)
+        await update.message.reply_text("🤫 Silent mode activated for this chat. Permission error messages will be suppressed.")
 
 
 async def doorman_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

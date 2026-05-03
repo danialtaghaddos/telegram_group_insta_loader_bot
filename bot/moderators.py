@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 
 from .config import logger
 
+
 # File paths for data persistence
 MODERATORS_FILE = "/data/moderators.json"
 ACCESS_REQUESTS_FILE = "/data/access_requests.json"
@@ -243,8 +244,11 @@ async def notify_admin_of_request(update: Update, context: ContextTypes.DEFAULT_
 
 async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /approve command - admin approves access request."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     # Check if replying to a message or if user_id is provided
@@ -301,8 +305,11 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /deny command - admin denies access request."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     user_id = None
@@ -346,8 +353,11 @@ async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def access_enabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /access_enabled command - admin enables access requests."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     settings["access_requests_enabled"] = True
@@ -361,8 +371,11 @@ async def access_enabled_command(update: Update, context: ContextTypes.DEFAULT_T
 
 async def access_disabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /access_disabled command - admin disables access requests."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     settings["access_requests_enabled"] = False
@@ -376,8 +389,11 @@ async def access_disabled_command(update: Update, context: ContextTypes.DEFAULT_
 
 async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /addmod command - admin adds moderator manually by username or user ID."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     if not context.args or len(context.args) < 1:
@@ -463,8 +479,11 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /removemod command - admin removes moderator by username or user ID."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     if not context.args or len(context.args) < 1:
@@ -541,8 +560,11 @@ def escape_markdown(text: str) -> str:
 
 async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /requests command - admin views pending requests."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     pending = get_pending_requests()
@@ -568,8 +590,11 @@ async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def list_moderators_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /listmods command - admin views all moderators."""
+    chat_id = update.effective_chat.id
     if not is_admin(update):
-        await update.message.reply_text("❌ Only admin can use this command.")
+        from .activation import SILENT_CHATS
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Only admin can use this command.")
         return
     
     if not moderators:
@@ -654,6 +679,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "/activate - Activate bot for current chat\n"
         text += "/deactivate - Deactivate bot for current chat\n"
         text += "/doorman - Toggle doorman mode\n"
+        text += "/silent - Toggle silent mode (suppress permission error messages)\n"
         text += "/myChats - Check your moderator status\n"
         text += "/help - Show this help message\n\n"
     else:

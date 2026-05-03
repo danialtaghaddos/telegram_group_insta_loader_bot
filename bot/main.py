@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 
 from .utils import extract_social_urls
-from .activation import activate, deactivate, list_chats, doorman, doorman_message_handler, is_activated
+from .activation import activate, deactivate, list_chats, doorman, silent, doorman_message_handler, is_activated, SILENT_CHATS
 from .moderators import (
     access_command,
     approve_command,
@@ -44,7 +44,8 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not is_activated(chat_id):
-        await update.message.reply_text("❌ Bot is not activated in this chat. ❌\nContact admin on www.mehreran.org")
+        if chat_id not in SILENT_CHATS:
+            await update.message.reply_text("❌ Bot is not activated in this chat. ❌\nContact admin on www.mehreran.org")
         return
     await handle_message(urls, update, context)
 
@@ -52,10 +53,11 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
 
-    # Core bot commands (activate/deactivate/doorman) - now with moderator support
+    # Core bot commands (activate/deactivate/doorman/silent) - now with moderator support
     app.add_handler(CommandHandler("activate", activate))
     app.add_handler(CommandHandler("deactivate", deactivate))
     app.add_handler(CommandHandler("doorman", doorman))
+    app.add_handler(CommandHandler("silent", silent))
 
     # Admin-only commands
     app.add_handler(CommandHandler("listChats", list_chats))
