@@ -419,7 +419,7 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception as telethon_error:
                 logger.error(f"Failed to resolve username @{username} via Telethon: {telethon_error}")
                 await update.message.reply_text(
-                    f"❌ Could not find user @{username}. This usually means:\n"
+                    f"❌ Could not find user @{escape_markdown(username)}. This usually means:\n"
                     f"1. The username is incorrect\n"
                     f"2. The user account doesn't exist\n\n"
                     f"**Note:** Configure TELEGRAM_API_ID and TELEGRAM_API_HASH to resolve usernames without bot interaction.\n"
@@ -433,7 +433,7 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     # Add as moderator
-    display_name = f"@{username}" if username else f"User ID `{user_id}`"
+    display_name = f"@{escape_markdown(username)}" if username else f"User ID `{user_id}`"
     add_moderator(user_id)
     await update.message.reply_text(
         f"✅ {display_name} (ID: `{user_id}`) has been added as a moderator.\n\n"
@@ -496,7 +496,7 @@ async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT
         except Exception as e:
             logger.error(f"Failed to resolve username @{username}: {e}")
             await update.message.reply_text(
-                f"❌ Could not find user @{username}. Make sure the username is correct and the user has interacted with the bot.",
+                f"❌ Could not find user @{escape_markdown(username)}. Make sure the username is correct and the user has interacted with the bot.",
                 parse_mode="Markdown"
             )
             return
@@ -507,7 +507,7 @@ async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT
         return
     
     # Remove moderator
-    display_name = f"@{username}" if username else f"User ID `{user_id}`"
+    display_name = f"@{escape_markdown(username)}" if username else f"User ID `{user_id}`"
     remove_moderator(user_id)
     await update.message.reply_text(
         f"✅ {display_name} (ID: `{user_id}`) has been removed as a moderator.",
@@ -582,13 +582,13 @@ async def list_moderators_command(update: Update, context: ContextTypes.DEFAULT_
         # Try to get user info for display
         try:
             user = await context.bot.get_chat(user_id)
-            name = user.first_name or "Unknown"
+            name = escape_markdown(user.first_name) or "Unknown"
             if user.last_name:
-                name += f" {user.last_name}"
+                name += f" {escape_markdown(user.last_name)}"
             
             # Create profile link
             if user.username:
-                profile_link = f"@{user.username}"
+                profile_link = f"@{escape_markdown(user.username)}"
             else:
                 profile_link = f"[profile](tg://user?id={user_id})"
             
