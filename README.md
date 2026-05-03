@@ -81,6 +81,15 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `BOT_TOKEN` | Your Telegram bot token from @BotFather |
 | `ADMIN_USER_ID` | Your Telegram numeric user ID (the bot admin) |
 | `DEBUG_BOT` | Set to enable debug mode (optional) |
+| `TELEGRAM_API_ID` | Telegram API ID for Telethon (optional, enables username resolution) |
+| `TELEGRAM_API_HASH` | Telegram API HASH for Telethon (optional, enables username resolution) |
+| `TELEGRAM_SESSION_STRING` | Telethon session string (optional, for persistent sessions) |
+
+**Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
+- Resolve any public username to user ID without requiring prior interaction with the bot
+- Get chat links for private groups/channels in `/listChats`
+
+To get your API credentials, visit [my.telegram.org](https://my.telegram.org).
 
 ### Data Storage
 

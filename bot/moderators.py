@@ -407,16 +407,25 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
             chat = await context.bot.get_chat(f"@{username}")
             user_id = chat.id
         except Exception as e:
-            logger.error(f"Failed to resolve username @{username}: {e}")
-            await update.message.reply_text(
-                f"❌ Could not find user @{username}. This usually means:\n"
-                f"1. The username is incorrect\n"
-                f"2. The user has never interacted with this bot\n\n"
-                f"**Workaround:** Ask the user to run `/access` or `/start` first, then try again.\n"
-                f"Or use `/addmod <user_id>` if you know their numeric Telegram ID.",
-                parse_mode="Markdown"
-            )
-            return
+            # Try Telethon as fallback
+            logger.debug(f"Failed to resolve username @{username} via bot API, trying Telethon...")
+            try:
+                from .telethon_client import resolve_username
+                result = await resolve_username(username)
+                if result:
+                    user_id, first_name, resolved_username = result
+                else:
+                    raise Exception("Not found via Telethon")
+            except Exception as telethon_error:
+                logger.error(f"Failed to resolve username @{username} via Telethon: {telethon_error}")
+                await update.message.reply_text(
+                    f"❌ Could not find user @{username}. This usually means:\n"
+                    f"1. The username is incorrect\n"
+                    f"2. The user account doesn't exist\n\n"
+                    f"**Note:** Configure TELEGRAM_API_ID and TELEGRAM_API_HASH to resolve usernames without bot interaction.\n"
+                    f"Or use /addmod <user_id> if you know their numeric Telegram ID."
+                )
+                return
     
     # Now we should have a user_id
     if user_id is None:

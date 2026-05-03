@@ -95,22 +95,30 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     urls = []
     for chat_id in sorted(ACTIVATED_CHATS):
+        url = None
+        
+        # First try the bot API
         try:
-            # Try to get chat info to find username
             chat = await context.bot.get_chat(chat_id)
             if chat.username:
-                # Public chat with username
                 url = f"https://t.me/{chat.username}"
             elif chat.type in [chat.type.PRIVATE, chat.type.SENDER]:
-                # Private user chat - use tg:// link
                 url = f"tg://user?id={chat_id}"
-            else:
-                # Private group/channel - no public URL available
-                url = None
         except Exception as e:
-            logger.debug(f"Failed to get chat info for {chat_id}: {e}")
-            url = None
-
+            logger.debug(f"Failed to get chat info via bot API for {chat_id}: {e}")
+        
+        # If bot API failed or no URL, try Telethon
+        if not url:
+            try:
+                from .telethon_client import get_chat_info
+                info = await get_chat_info(chat_id)
+                if info and info.get('link'):
+                    url = info['link']
+                elif info and info.get('username'):
+                    url = f"https://t.me/{info['username']}"
+            except Exception as e:
+                logger.debug(f"Failed to get chat info via Telethon for {chat_id}: {e}")
+        
         if url:
             urls.append(f"{url} (ID: {chat_id})")
         else:
