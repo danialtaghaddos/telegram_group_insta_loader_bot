@@ -12,7 +12,7 @@ DATA_FILE = "/data/activated_chats.json"
 DOORMAN_FILE = "/data/doorman_chats.json"
 
 # Import moderator functions
-from .moderators import is_admin as check_is_admin, is_moderator, get_moderated_chats
+from .moderators import is_admin as check_is_admin, is_moderator
 
 def load_activated_chats() -> set[int]:
     if not os.path.exists(DATA_FILE):
