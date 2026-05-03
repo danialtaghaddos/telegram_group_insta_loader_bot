@@ -220,11 +220,11 @@ async def notify_admin_of_request(update: Update, context: ContextTypes.DEFAULT_
     if not admin_id:
         return
     
-    name = first_name
+    name = escape_markdown(first_name)
     if last_name:
-        name += f" {last_name}"
+        name += f" {escape_markdown(last_name)}"
     if username:
-        name += f" (@{username})"
+        name += f" (@{escape_markdown(username)})"
     
     try:
         await context.bot.send_message(
@@ -528,6 +528,17 @@ async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"Failed to notify removed moderator: {e}")
 
 
+def escape_markdown(text: str) -> str:
+    """Escape special Markdown characters in user-provided text."""
+    if not text:
+        return text
+    # Escape characters that have special meaning in Markdown
+    escape_chars = r'\_`['
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /requests command - admin views pending requests."""
     if not is_admin(update):
@@ -542,11 +553,11 @@ async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     text = "📋 **Pending Access Requests:**\n\n"
     for req in pending:
-        name = req["first_name"]
+        name = escape_markdown(req["first_name"])
         if req.get("last_name"):
-            name += f" {req['last_name']}"
+            name += f" {escape_markdown(req['last_name'])}"
         if req.get("username"):
-            name += f" (@{req['username']})"
+            name += f" (@{escape_markdown(req['username'])})"
         
         text += f"👤 {name} (ID: `{req['user_id']}`)\n"
     
