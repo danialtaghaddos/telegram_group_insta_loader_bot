@@ -20,6 +20,7 @@ from .moderators import (
     add_moderator_command,
     remove_moderator_command,
     list_requests_command,
+    list_moderators_command,
     my_chats_command,
     help_command,
 )
@@ -70,6 +71,7 @@ def main():
     app.add_handler(CommandHandler("addmod", add_moderator_command))
     app.add_handler(CommandHandler("removemod", remove_moderator_command))
     app.add_handler(CommandHandler("requests", list_requests_command))
+    app.add_handler(CommandHandler("listmods", list_moderators_command))
 
     # Moderator info commands
     app.add_handler(CommandHandler("myChats", my_chats_command))

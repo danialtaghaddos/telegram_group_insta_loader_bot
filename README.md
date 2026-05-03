@@ -5,7 +5,7 @@ A Telegram bot that downloads and shares Instagram/Facebook media in Telegram ch
 ## Features
 
 - 📸 **Download Instagram/Facebook Media** - Simply send Instagram or Facebook links in an activated chat to download and share media
-- 👥 **Moderator System** - Multiple moderators with global access can manage bot activation in any chat they join
+- 👥 **Moderator System** - Multiple moderators can manage bot activation in any chat they join
 - 🚪 **Doorman Mode** - Automatically delete join/leave system messages to keep chats clean
 - 🔐 **Access Control** - Admin can grant moderator access to trusted users
 - 📝 **Access Requests** - Users can request moderator access via `/access` command
@@ -21,7 +21,7 @@ A Telegram bot that downloads and shares Instagram/Facebook media in Telegram ch
 
 ### For Moderators
 
-Moderators have **global access** - they can activate/deactivate the bot and manage doorman settings in any chat they are a member of.
+Moderators can activate/deactivate the bot and manage doorman settings in any chat they are a member of.
 
 | Command | Description |
 |---------|-------------|
@@ -36,13 +36,14 @@ Moderators have **global access** - they can activate/deactivate the bot and man
 | Command | Description |
 |---------|-------------|
 | `/listChats` | List all activated chats across the bot |
+| `/listmods` | List all moderators with profile links |
 | `/approve <user_id>` | Approve a pending moderator access request. Reply to the request notification or provide user ID |
 | `/deny <user_id>` | Deny a pending moderator access request. Reply to the request notification or provide user ID |
 | `/requests` | View all pending moderator access requests |
 | `/access_enabled` | Enable access requests - allows users to use `/access` to request moderator access |
 | `/access_disabled` | Disable access requests - users cannot request moderator access |
-| `/addmod @username` | Manually add a user as moderator with global access |
-| `/removemod @username` | Remove a user as moderator. If used in a group, removes from that group. If used in private chat, removes all roles |
+| `/addmod @username` | Manually add a user as moderator |
+| `/removemod @username` | Remove a user as moderator |
 | `/activate` | Activate the bot for the current chat (admin has access to all chats) |
 | `/deactivate` | Deactivate the bot for the current chat (admin has access to all chats) |
 | `/doorman` | Toggle doorman mode (admin has access to all chats) |
@@ -58,7 +59,7 @@ Moderators have **global access** - they can activate/deactivate the bot and man
 
 ### Manual Moderator Addition
 
-Admin can directly add moderators with global access using:
+Admin can directly add moderators using:
 ```
 /addmod @username
 ```
@@ -68,7 +69,7 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 ### Chat Activation
 
 - **Admin**: Can activate/deactivate the bot in any chat
-- **Moderators**: Can activate/deactivate the bot in any chat they are a member of (global access)
+- **Moderators**: Can activate/deactivate the bot in any chat they are a member of
 - Once activated, users in that chat can send Instagram/Facebook links to download media
 
 ## Configuration
@@ -87,7 +88,7 @@ The bot stores data in JSON files in the `/data` directory:
 
 - `activated_chats.json` - List of chat IDs where the bot is activated
 - `doorman_chats.json` - List of chat IDs with doorman mode enabled
-- `moderators.json` - Moderator assignments (user_id -> set of chat_ids)
+- `moderators.json` - List of moderator user IDs
 - `access_requests.json` - Access request history
 - `settings.json` - Bot settings (e.g., access requests enabled/disabled)
 
