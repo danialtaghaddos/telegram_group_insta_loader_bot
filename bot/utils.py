@@ -23,14 +23,12 @@ def extract_social_urls(text: str):
         if 'instagram.com' in url_lower and '/stories/' in url_lower:
             continue
 
-        # Skip Instagram user profiles (just username, no other path)
+        # Skip Instagram user profiles (just username, no content path)
         if 'instagram.com' in url_lower:
-            # Extract path after instagram.com
-            path_match = re.search(r'instagram\.com/([^/?#]+)', url_lower)
+            path_match = re.search(r'instagram\.com/([^\s?#]+)', url_lower)
             if path_match:
-                path = path_match.group(1)
-                # If path doesn't contain / and isn't a known content type, skip it
-                if '/' not in path and path not in ['reel', 'p']:
+                full_path = path_match.group(1)
+                if not re.search(r'(^|/)(reel|p|tv|reels)/', full_path):
                     continue
 
         # Skip Facebook stories

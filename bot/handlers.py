@@ -8,7 +8,7 @@ from .config import queue, logger
 
 async def handle_message(urls: list[Any], update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, url in enumerate(urls, 1):
-        status_text = f"🤖 I'm on in boss..." if len(urls) == 1 else f"🔜 Items ahead:{len(urls)} — Will get to work soon..."
+        status_text = f"🤖 I'm on it boss..." if len(urls) == 1 else f"🔜 Items ahead:{len(urls)} — Will get to work soon..."
 
         status_msg = await update.message.reply_text(
             status_text,

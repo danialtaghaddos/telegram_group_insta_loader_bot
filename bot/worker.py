@@ -20,7 +20,7 @@ async def worker():
             platform = "Instagram" if "instagram.com" in url else "Facebook"
 
             try:
-                await status_msg.edit_text("🤖 I'm on in boss...")
+                await status_msg.edit_text("🤖 I'm on it boss...")
             except:
                 pass
 
@@ -37,11 +37,6 @@ async def worker():
                         pass
                     continue
 
-                try:
-                    await status_msg.edit_text(f"🚀 Uploading ...")
-                except:
-                    pass
-
                 if len(files) == 1:
                     file_path = files[0]
                     if file_path.lower().endswith(".mp4"):
@@ -49,9 +44,13 @@ async def worker():
                             await status_msg.edit_text(f"⚡ Processing ...")
                         except:
                             pass
+                        
                         file_path = compress_video(file_path)
-
                         width, height, duration = get_video_metadata(file_path)
+                        try:
+                            await status_msg.edit_text(f"🚀 Uploading ...")
+                        except:
+                            pass
                         await message.reply_video(
                             video=open(file_path, "rb"),
                             reply_to_message_id=message.message_id,

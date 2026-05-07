@@ -176,7 +176,7 @@ async def silent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         SILENT_CHATS.add(chat_id)
         save_silent_chats(SILENT_CHATS)
-        await update.message.reply_text("🤫 Silent mode activated for this chat. Permission error messages will be suppressed.")
+        await update.message.reply_text("🤫 OK.")
 
 
 async def doorman_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
