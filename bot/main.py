@@ -33,6 +33,7 @@ from .moderators import (
     list_moderators_command,
     my_chats_command,
     help_command,
+    load_command,
     is_moderator,
 )
 from .config import BOT_TOKEN
@@ -99,6 +100,9 @@ def main():
 
     # Help command
     app.add_handler(CommandHandler("help", help_command))
+
+    # Admin load command (reply to message with links to download)
+    app.add_handler(CommandHandler("load", load_command))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

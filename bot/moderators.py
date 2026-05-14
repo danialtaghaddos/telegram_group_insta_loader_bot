@@ -13,6 +13,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from .config import logger
+from .utils import extract_social_urls
 
 
 # File paths for data persistence
@@ -629,6 +630,26 @@ async def my_chats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def load_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /load command - admin can reply to a message with links to download content."""
+    if not is_admin(update):
+        return
+    
+    if not update.message or not update.message.reply_to_message:
+        return
+    
+    replied_message = update.message.reply_to_message
+    if not replied_message.text:
+        return
+    
+    urls = extract_social_urls(replied_message.text)
+    if not urls:
+        return
+    
+    # Import here to avoid circular imports
+    from .handlers import handle_message
+    await handle_message(urls, update, context)
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command - show available commands."""
     if not update.effective_user:
@@ -656,7 +677,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "/access_enabled - Enable access requests\n"
         text += "/access_disabled - Disable access requests\n"
         text += "/addmod @username - Add moderator\n"
-        text += "/removemod @username - Remove moderator\n\n"
+        text += "/removemod @username - Remove moderator\n"
+        text += "/load - Reply to a message with links to download content (works in any chat)\n\n"
     elif is_mod:
         text += "**Moderator Commands:**\n"
         text += "/activate - Activate bot for current chat\n"
