@@ -251,8 +251,15 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Try to extract user_id from the original request notification
         reply_text = update.message.reply_to_message.text
         if reply_text:
-            # Look for User ID in the message
-            match = re.search(r'User ID: `(\d+)`', reply_text)
+            # Look for User ID in the message - try multiple patterns for robustness
+            # Pattern 1: User ID: `12345` (with backticks)
+            match = re.search(r'User ID:\s*`?(\d+)`?', reply_text)
+            if not match:
+                # Pattern 2: ID: `12345` or ID: 12345
+                match = re.search(r'ID:\s*`?(\d+)`?', reply_text)
+            if not match:
+                # Pattern 3: Any standalone number that looks like a user ID (5+ digits)
+                match = re.search(r'\b(\d{5,})\b', reply_text)
             if match:
                 user_id = int(match.group(1))
     
@@ -306,7 +313,15 @@ async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text
         if reply_text:
-            match = re.search(r'User ID: `(\d+)`', reply_text)
+            # Look for User ID in the message - try multiple patterns for robustness
+            # Pattern 1: User ID: `12345` (with backticks)
+            match = re.search(r'User ID:\s*`?(\d+)`?', reply_text)
+            if not match:
+                # Pattern 2: ID: `12345` or ID: 12345
+                match = re.search(r'ID:\s*`?(\d+)`?', reply_text)
+            if not match:
+                # Pattern 3: Any standalone number that looks like a user ID (5+ digits)
+                match = re.search(r'\b(\d{5,})\b', reply_text)
             if match:
                 user_id = int(match.group(1))
     

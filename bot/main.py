@@ -33,6 +33,7 @@ from .moderators import (
     list_moderators_command,
     my_chats_command,
     help_command,
+    is_moderator,
 )
 from .config import BOT_TOKEN
 from .handlers import handle_message
@@ -53,8 +54,14 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not urls:
         return
     
+    # Check if chat is activated or if user is a moderator in private chat
     if not is_activated(chat_id):
-        return
+        # Allow moderators to use the bot in their private chats
+        if update.effective_user and chat_id == update.effective_user.id and is_moderator(update.effective_user.id):
+            pass  # Allow moderator in private chat
+        else:
+            return
+    
     await handle_message(urls, update, context)
 
 
