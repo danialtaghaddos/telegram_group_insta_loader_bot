@@ -692,8 +692,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "/help - Show this help message\n\n"
     
     text += "**Bot Description:**\n"
-    text += "This bot downloads and shares Instagram/Facebook media in Telegram chats.\n"
-    text += "Moderators can activate the bot in their chats and manage doorman settings.\n"
-    text += "Simply send Instagram/Facebook links in an activated chat to download media."
+    text += "This bot downloads and shares media in Telegram chats.\n"
+    text += "Moderators can activate the bot in their chats and manage doorman settings.\n\n"
+    text += "**Supported Platforms:**\n"
+    text += "• Instagram - Photos and videos\n"
+    text += "• Facebook - Videos\n"
+    text += "• YouTube - Audio (MP3/M4A)\n\n"
+    text += "Simply send links in an activated chat to download media."
     
     await update.message.reply_text(text, parse_mode="Markdown")

@@ -3,6 +3,7 @@ import asyncio
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -37,7 +38,7 @@ from .moderators import (
     is_moderator,
 )
 from .config import BOT_TOKEN
-from .handlers import handle_message
+from .handlers import handle_message, handle_youtube_callback
 from .worker import worker
 
 async def on_startup(app):
@@ -103,6 +104,9 @@ def main():
 
     # Admin load command (reply to message with links to download)
     app.add_handler(CommandHandler("load", load_command))
+
+    # YouTube callback handler (must be before message handlers to catch callbacks)
+    app.add_handler(CallbackQueryHandler(handle_youtube_callback, pattern=r"^yt_(audio|cancel)_\d+$"))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

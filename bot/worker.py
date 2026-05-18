@@ -11,13 +11,74 @@ from .video import compress_video, get_video_metadata
 from .downloaders import download_media
 from .config import queue, logger
 
+
+def is_audio_file(file_path: str) -> bool:
+    """Check if the file is an audio file"""
+    audio_extensions = (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus")
+    return file_path.lower().endswith(audio_extensions)
+
+
+def get_audio_duration(file_path: str) -> int:
+    """Get audio file duration using ffprobe"""
+    try:
+        import subprocess
+        import json
+        
+        cmd = [
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-select_streams", "a:0", "-show_entries",
+            "stream=duration", "-show_entries", "format=duration",
+            file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        data = json.loads(result.stdout)
+        
+        # Try stream duration first, then format duration
+        streams = data.get("streams", [])
+        if streams and streams[0].get("duration"):
+            return int(float(streams[0]["duration"]))
+        
+        fmt = data.get("format", {})
+        if fmt and fmt.get("duration"):
+            return int(float(fmt["duration"]))
+        
+        return 0
+    except Exception as e:
+        logger.warning(f"Failed to get audio duration for {file_path}: {e}")
+        return 0
+
 async def worker():
     while True:
-        update, context, url, status_msg, original_reply_to_message_id = await queue.get()
+        result = await queue.get()
+        # Support both old 5-tuple and new 6-tuple format
+        if len(result) == 6:
+            update, context, url, status_msg, original_reply_to_message_id, message = result
+        else:
+            update, context, url, status_msg, original_reply_to_message_id = result
+            message = update.message
 
         try:
-            message = update.message
-            platform = "Instagram" if "instagram.com" in url else "Facebook"
+            # Fallback: try to get message from update, then from status_msg.reply_to_message
+            if message is None:
+                message = update.message if update.message else None
+            if message is None and status_msg and status_msg.reply_to_message:
+                message = status_msg.reply_to_message
+            
+            # Get chat_id for fallback sending (when message is None)
+            chat_id = None
+            if message is None:
+                chat_id = status_msg.chat_id if status_msg else None
+                if chat_id is None:
+                    chat_id = update.effective_chat.id if update.effective_chat else None
+            if "youtube.com" in url or "youtu.be" in url:
+                platform = "YouTube"
+            elif "instagram.com" in url:
+                platform = "Instagram"
+            elif "facebook.com" in url or "fb.watch" in url or "fb.com" in url:
+                platform = "Facebook"
+            else:
+                platform = "Unknown"
 
             try:
                 await status_msg.edit_text("🤖 I'm on it boss...")
@@ -39,7 +100,41 @@ async def worker():
 
                 if len(files) == 1:
                     file_path = files[0]
-                    if file_path.lower().endswith(".mp4"):
+                    if is_audio_file(file_path):
+                        # Handle audio files (MP3, M4A, etc.)
+                        try:
+                            await status_msg.edit_text(f"⚡ Processing audio ...")
+                        except:
+                            pass
+                        
+                        try:
+                            await status_msg.edit_text(f"🚀 Uploading audio ...")
+                        except:
+                            pass
+                        
+                        # Get audio duration using ffprobe
+                        duration = get_audio_duration(file_path)
+                        
+                        if message:
+                            await message.reply_audio(
+                                audio=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                                duration=duration,
+                                read_timeout=300,
+                                write_timeout=300,
+                                connect_timeout=60,
+                            )
+                        elif chat_id:
+                            await context.bot.send_audio(
+                                chat_id=chat_id,
+                                audio=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                                duration=duration,
+                                read_timeout=300,
+                                write_timeout=300,
+                                connect_timeout=60,
+                            )
+                    elif file_path.lower().endswith(".mp4"):
                         try:
                             await status_msg.edit_text(f"⚡ Processing ...")
                         except:
@@ -51,35 +146,67 @@ async def worker():
                             await status_msg.edit_text(f"🚀 Uploading ...")
                         except:
                             pass
-                        await message.reply_video(
-                            video=open(file_path, "rb"),
-                            reply_to_message_id=original_reply_to_message_id,
-                            supports_streaming=True,
-                            width=width,
-                            height=height,
-                            duration=duration,
-                            read_timeout=300,
-                            write_timeout=300,
-                            connect_timeout=60,
-                        )
+                        if message:
+                            await message.reply_video(
+                                video=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                                supports_streaming=True,
+                                width=width,
+                                height=height,
+                                duration=duration,
+                                read_timeout=300,
+                                write_timeout=300,
+                                connect_timeout=60,
+                            )
+                        elif chat_id:
+                            await context.bot.send_video(
+                                chat_id=chat_id,
+                                video=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                                supports_streaming=True,
+                                width=width,
+                                height=height,
+                                duration=duration,
+                                read_timeout=300,
+                                write_timeout=300,
+                                connect_timeout=60,
+                            )
                     else:
-                        await message.reply_photo(
-                            photo=open(file_path, "rb"),
-                            reply_to_message_id=original_reply_to_message_id,
-                        )
+                        if message:
+                            await message.reply_photo(
+                                photo=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                            )
+                        elif chat_id:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=open(file_path, "rb"),
+                                reply_to_message_id=original_reply_to_message_id,
+                            )
                 else:
                     media_group = []
                     for f in files[:10]:
-                        if f.lower().endswith(".mp4"):
+                        if is_audio_file(f):
+                            # Note: Telegram doesn't support audio in media groups
+                            # Send audio files separately
+                            pass
+                        elif f.lower().endswith(".mp4"):
                             f = compress_video(f)
                             media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             media_group.append(InputMediaPhoto(open(f, "rb")))
 
-                    await message.reply_media_group(
-                        media=media_group,
-                        reply_to_message_id=original_reply_to_message_id,
-                    )
+                    if message:
+                        await message.reply_media_group(
+                            media=media_group,
+                            reply_to_message_id=original_reply_to_message_id,
+                        )
+                    elif chat_id:
+                        await context.bot.send_media_group(
+                            chat_id=chat_id,
+                            media=media_group,
+                            reply_to_message_id=original_reply_to_message_id,
+                        )
 
                 try:
                     await status_msg.delete()

@@ -1,10 +1,11 @@
 # Telegram Group Instagram Loader Bot
 
-A Telegram bot that downloads and shares Instagram/Facebook media in Telegram chats. The bot supports a moderator system allowing multiple users to manage bot activation in any chat they are a member of.
+A Telegram bot that downloads and shares Instagram/Facebook/YouTube media in Telegram chats. The bot supports a moderator system allowing multiple users to manage bot activation in any chat they are a member of.
 
 ## Features
 
 - 📸 **Download Instagram/Facebook Media** - Simply send Instagram or Facebook links in an activated chat to download and share media
+- 🎵 **Download YouTube Audio** - When a YouTube link is shared, the bot asks if you want to download it as audio (MP3/M4A)
 - 👥 **Moderator System** - Multiple moderators can manage bot activation in any chat they join
 - 🚪 **Doorman Mode** - Automatically delete join/leave system messages to keep chats clean
 - 🔐 **Access Control** - Admin can grant moderator access to trusted users
@@ -84,6 +85,7 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `TELEGRAM_API_ID` | Telegram API ID for Telethon (optional, enables username resolution) |
 | `TELEGRAM_API_HASH` | Telegram API HASH for Telethon (optional, enables username resolution) |
 | `TELEGRAM_SESSION_STRING` | Telethon session string (optional, for persistent sessions) |
+| `YOUTUBE_AUDIO_FORMAT` | Audio format for YouTube downloads: `mp3` or `m4a` (default: `m4a`) |
 
 **Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
 - Resolve any public username to user ID without requiring prior interaction with the bot
@@ -140,6 +142,33 @@ python -m bot.main
 - Python 3.9+
 - python-telegram-bot library
 - Other dependencies in `requirements.txt`
+- **FFmpeg** - Required for audio/video processing
+- **Node.js** (optional but recommended) - JavaScript runtime for yt-dlp to properly extract YouTube formats
+
+### Installing Dependencies
+
+#### Ubuntu/Debian
+```bash
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Install FFmpeg
+sudo apt-get install ffmpeg
+
+# Install Node.js (recommended for YouTube support)
+sudo apt-get install nodejs
+```
+
+#### macOS
+```bash
+# Install FFmpeg and Node.js via Homebrew
+brew install ffmpeg node
+```
+
+#### Windows
+- Download and install [FFmpeg](https://ffmpeg.org/download.html)
+- Download and install [Node.js](https://nodejs.org/)
+- Make sure both are added to your system PATH
 
 ## License
 

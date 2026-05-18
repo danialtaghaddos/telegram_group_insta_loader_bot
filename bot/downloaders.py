@@ -104,7 +104,79 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
     return sorted(files)
 
 
+async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
+    """Download YouTube video as audio file (MP3 or M4A)"""
+    if format not in ("mp3", "m4a"):
+        format = "m4a"
+    
+    logger.info(f"Downloading YouTube audio from {url} as {format.upper()}")
+    
+    ydl_opts = {
+        "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
+        "quiet": True,
+        "no_warnings": False,  # Show warnings for debugging
+        "format": "bestaudio/best",
+        "extract_flat": False,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": format,
+            "preferredquality": "192",
+        }],
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "retries": 3,
+        "fragment_retries": 3,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            # After FFmpegExtractAudio postprocessor, the extension changes
+            expected_ext = format
+            filepath = os.path.splitext(ydl.prepare_filename(info))[0] + f".{expected_ext}"
+            
+            logger.info(f"Looking for audio file at: {filepath}")
+            
+            # If the expected file doesn't exist, try to find the actual output
+            if not os.path.exists(filepath):
+                # yt-dlp might have created a file with a different extension
+                base_path = os.path.splitext(ydl.prepare_filename(info))[0]
+                logger.info(f"Expected file not found, searching in: {base_path}.*")
+                for ext in [expected_ext, "m4a", "mp3", "webm", "opus", "m4a"]:
+                    test_path = f"{base_path}.{ext}"
+                    if os.path.exists(test_path):
+                        filepath = test_path
+                        logger.info(f"Found audio file: {filepath}")
+                        break
+            
+            if os.path.exists(filepath):
+                logger.info(f"Successfully downloaded audio: {filepath}")
+                return [filepath]
+            else:
+                logger.error(f"Audio file not found after download. Expected: {filepath}")
+                # List files in temp_dir for debugging
+                files_in_dir = os.listdir(temp_dir)
+                logger.error(f"Files in temp dir: {files_in_dir}")
+                return []
+    except Exception as e:
+        logger.error(f"YouTube audio download error for {url}: {e}")
+        raise
+
+
 async def download_media(url: str, temp_dir: str):
+    # YouTube: download as audio
+    if "youtube.com" in url or "youtu.be" in url:
+        try:
+            # Default to M4A format for better quality
+            audio_format = os.getenv("YOUTUBE_AUDIO_FORMAT", "m4a").lower()
+            if audio_format not in ("mp3", "m4a"):
+                audio_format = "m4a"
+            return await download_youtube_audio(url, temp_dir, audio_format)
+        except Exception as e:
+            logger.error(f"YouTube audio download failed for {url}: {e}")
+            return []
+
     # Instagram: prefer gallery-dl
     if "instagram.com" in url:
         files = await download_with_gallery_dl(url, temp_dir)
