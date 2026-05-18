@@ -13,7 +13,7 @@ from .config import queue, logger
 
 async def worker():
     while True:
-        update, context, url, status_msg = await queue.get()
+        update, context, url, status_msg, original_reply_to_message_id = await queue.get()
 
         try:
             message = update.message
@@ -44,7 +44,7 @@ async def worker():
                             await status_msg.edit_text(f"⚡ Processing ...")
                         except:
                             pass
-                        
+
                         file_path = compress_video(file_path)
                         width, height, duration = get_video_metadata(file_path)
                         try:
@@ -53,7 +53,7 @@ async def worker():
                             pass
                         await message.reply_video(
                             video=open(file_path, "rb"),
-                            reply_to_message_id=message.message_id,
+                            reply_to_message_id=original_reply_to_message_id,
                             supports_streaming=True,
                             width=width,
                             height=height,
@@ -65,7 +65,7 @@ async def worker():
                     else:
                         await message.reply_photo(
                             photo=open(file_path, "rb"),
-                            reply_to_message_id=message.message_id,
+                            reply_to_message_id=original_reply_to_message_id,
                         )
                 else:
                     media_group = []
@@ -78,7 +78,7 @@ async def worker():
 
                     await message.reply_media_group(
                         media=media_group,
-                        reply_to_message_id=message.message_id,
+                        reply_to_message_id=original_reply_to_message_id,
                     )
 
                 try:

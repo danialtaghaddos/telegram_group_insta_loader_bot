@@ -648,7 +648,7 @@ async def load_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Import here to avoid circular imports
     from .handlers import handle_message
-    await handle_message(urls, update, context)
+    await handle_message(urls, update, context, reply_to_message_id=replied_message.message_id)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command - show available commands."""
