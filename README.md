@@ -61,6 +61,7 @@ Moderators can activate/deactivate the bot and manage doorman settings in any ch
 ### Manual Moderator Addition
 
 Admin can directly add moderators using:
+
 ```
 /addmod @username
 ```
@@ -86,12 +87,41 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `TELEGRAM_API_HASH` | Telegram API HASH for Telethon (optional, enables username resolution) |
 | `TELEGRAM_SESSION_STRING` | Telethon session string (optional, for persistent sessions) |
 | `YOUTUBE_AUDIO_FORMAT` | Audio format for YouTube downloads: `mp3` or `m4a` (default: `m4a`) |
+| `COOKIES_TXT` | Instagram cookies in netscape format (optional, for private posts) |
+| `FACEBOOK_COOKIES_TXT` | Facebook cookies in netscape format (optional, for private videos) |
+| `YOUTUBE_COOKIES_TXT` | YouTube cookies in netscape format (optional, helps prevent 403 errors) |
 
 **Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
+
 - Resolve any public username to user ID without requiring prior interaction with the bot
 - Get chat links for private groups/channels in `/listChats`
 
 To get your API credentials, visit [my.telegram.org](https://my.telegram.org).
+
+### Obtaining Cookies (Optional)
+
+Cookies help prevent 403 errors and allow downloading private/restricted content.
+
+#### Getting YouTube Cookies
+
+YouTube cookies are particularly useful for preventing 403 Forbidden errors when downloading videos.
+
+1. Install a browser extension like "Get cookies.txt LOCALLY" (Chrome/Firefox)
+2. Log in to YouTube in your browser
+3. Use the extension to export cookies from youtube.com in Netscape format
+4. Save the content and set it as the `YOUTUBE_COOKIES_TXT` environment variable
+
+Alternatively, you can use yt-dlp to extract cookies:
+
+```bash
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+#### Getting Instagram/Facebook Cookies
+
+Follow the same process for Instagram (instagram.com) or Facebook (facebook.com) content.
+
+**Note:** Cookies are sensitive data. Keep them private and never share them publicly.
 
 ### Data Storage
 
@@ -148,6 +178,7 @@ python -m bot.main
 ### Installing Dependencies
 
 #### Ubuntu/Debian
+
 ```bash
 # Install Python dependencies
 pip install -r requirements.txt
@@ -160,16 +191,16 @@ sudo apt-get install nodejs
 ```
 
 #### macOS
+
 ```bash
 # Install FFmpeg and Node.js via Homebrew
 brew install ffmpeg node
 ```
 
 #### Windows
+
 - Download and install [FFmpeg](https://ffmpeg.org/download.html)
 - Download and install [Node.js](https://nodejs.org/)
 - Make sure both are added to your system PATH
 
 ## License
-
-

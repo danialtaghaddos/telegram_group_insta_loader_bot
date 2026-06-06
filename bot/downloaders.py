@@ -44,6 +44,26 @@ def get_facebook_cookies_file():
         logger.error(f"Failed to write Facebook cookies: {e}")
         return None
 
+
+def get_youtube_cookies_file():
+    """Writes YouTube cookies from env var if provided"""
+    path = f"{TMP_PATH}/youtube_cookies.txt"
+    
+    if os.path.exists(path) and os.path.getsize(path) > 10:
+        return path
+    
+    cookies = os.getenv("YOUTUBE_COOKIES_TXT")
+    if not cookies or not cookies.strip():
+        return None
+
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(cookies.strip())
+        return path
+    except Exception as e:
+        logger.error(f"Failed to write YouTube cookies: {e}")
+        return None
+
 async def download_with_ytdlp(url: str, temp_dir: str):
     is_facebook = "facebook.com" in url or "fb.watch" in url
     cookiefile = get_facebook_cookies_file() if is_facebook else get_cookies_file()
@@ -112,10 +132,14 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
     
     logger.info(f"Downloading YouTube audio from {url} as {format.upper()}")
     
+    # Get YouTube cookies file to prevent 403 errors
+    cookiefile = get_youtube_cookies_file()
+    
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "no_warnings": False,  # Show warnings for debugging
+        "cookiefile": cookiefile,  # Use YouTube cookies if available
         "format": "bestaudio/best",
         "extract_flat": False,
         "postprocessors": [{
