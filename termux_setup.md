@@ -166,13 +166,25 @@ nohup python -m bot.main > logs/bot.log 2>&1 &
 ps aux | grep "python -m bot.main"
 ```
 
+### Restart the Bot
+
+```bash
+# Using the restart script (recommended)
+cd ~/telegram_bot
+./restart_bot.sh
+
+# Or use the check_bot.sh script
+./check_bot.sh restart
+```
+
 ### Stop the Bot
 
 ```bash
-# Find the process ID
-ps aux | grep "python -m bot.main"
+# Using the check_bot.sh script
+./check_bot.sh stop
 
-# Kill the process (replace PID with actual number)
+# Or manually find and kill the process
+ps aux | grep "python -m bot.main"
 kill PID
 ```
 
@@ -250,8 +262,8 @@ git pull
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Restart the bot
-./check_bot.sh restart
+# Restart the bot using the dedicated script
+./restart_bot.sh
 ```
 
 ### Storage Management
@@ -372,7 +384,7 @@ If you encounter issues:
 1. Check logs: `tail -f ~/telegram_bot/logs/bot.log`
 2. Verify configuration: `cat ~/telegram_bot/.env`
 3. Test Instagram access from phone browser
-4. Restart the bot: `./check_bot.sh restart`
+4. Restart the bot: `./restart_bot.sh`
 
 ## Summary
 

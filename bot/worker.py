@@ -8,7 +8,7 @@ from telegram import InputMediaPhoto, InputMediaVideo
 from bot.utils import get_file_size_mb
 
 from .video import compress_video, get_video_metadata
-from .downloaders import download_media
+from .downloaders import download_media, fetch_instagram_caption
 from .config import queue, logger, CACHE_ENABLE_FORWARDING
 from .file_cache import get_cache_metadata, add_cache_entry, is_cache_valid
 
@@ -153,6 +153,18 @@ async def worker():
                         pass
                     continue
 
+                # Fetch Instagram caption if available
+                caption = ""
+                if "instagram.com" in url:
+                    try:
+                        await status_msg.edit_text(f"📝 Fetching caption...")
+                    except:
+                        pass
+                    caption = await fetch_instagram_caption(url)
+                    # Truncate caption if too long (Telegram limit is 1024 chars)
+                    if caption and len(caption) > 1000:
+                        caption = caption[:997] + "..."
+
                 # Track uploaded message info for caching
                 uploaded_chat_id = None
                 uploaded_message_ids = []
@@ -222,6 +234,7 @@ async def worker():
                                 width=width,
                                 height=height,
                                 duration=duration,
+                                caption=caption if caption else None,
                                 read_timeout=300,
                                 write_timeout=300,
                                 connect_timeout=60,
@@ -237,6 +250,7 @@ async def worker():
                                 width=width,
                                 height=height,
                                 duration=duration,
+                                caption=caption if caption else None,
                                 read_timeout=300,
                                 write_timeout=300,
                                 connect_timeout=60,
@@ -248,6 +262,7 @@ async def worker():
                             sent_msg = await message.reply_photo(
                                 photo=open(file_path, "rb"),
                                 reply_to_message_id=original_reply_to_message_id,
+                                caption=caption if caption else None,
                             )
                             uploaded_chat_id = sent_msg.chat_id
                             uploaded_message_ids = [sent_msg.message_id]
@@ -256,6 +271,7 @@ async def worker():
                                 chat_id=chat_id,
                                 photo=open(file_path, "rb"),
                                 reply_to_message_id=original_reply_to_message_id,
+                                caption=caption if caption else None,
                             )
                             uploaded_chat_id = sent_msg.chat_id
                             uploaded_message_ids = [sent_msg.message_id]
@@ -278,10 +294,18 @@ async def worker():
                             if f != original_f:
                                 files[i] = f
                             updated_files.append(f)
-                            media_group.append(InputMediaVideo(open(f, "rb")))
+                            # Add caption to the first item in media group
+                            if i == 0 and caption:
+                                media_group.append(InputMediaVideo(open(f, "rb"), caption=caption))
+                            else:
+                                media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             updated_files.append(f)
-                            media_group.append(InputMediaPhoto(open(f, "rb")))
+                            # Add caption to the first item in media group
+                            if i == 0 and caption:
+                                media_group.append(InputMediaPhoto(open(f, "rb"), caption=caption))
+                            else:
+                                media_group.append(InputMediaPhoto(open(f, "rb")))
                     files = updated_files
 
                     if message:

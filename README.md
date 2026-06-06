@@ -5,6 +5,7 @@ A Telegram bot that downloads and shares Instagram/Facebook/YouTube media in Tel
 ## Features
 
 - 📸 **Download Instagram/Facebook Media** - Simply send Instagram or Facebook links in an activated chat to download and share media
+- 📝 **Instagram Captions** - Automatically fetches and includes Instagram post captions with the shared media
 - 🎵 **Download YouTube Audio** - When a YouTube link is shared, the bot asks if you want to download it as audio (MP3/M4A)
 - 👥 **Moderator System** - Multiple moderators can manage bot activation in any chat they join
 - 🚪 **Doorman Mode** - Automatically delete join/leave system messages to keep chats clean

@@ -227,7 +227,67 @@ print_success "Start script created"
 
 echo ""
 
-# Step 8: Create monitoring script
+# Step 8: Create restart script
+print_info "Creating restart script..."
+cat > restart_bot.sh << 'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+
+# Restart script for Telegram Instagram Loader Bot
+
+cd ~/telegram_bot
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}Restarting Telegram Instagram Loader Bot...${NC}"
+
+# Check if virtual environment exists
+if [ ! -d "venv" ]; then
+    echo -e "${RED}Error: Virtual environment not found. Run install_on_termux.sh first.${NC}"
+    exit 1
+fi
+
+# Stop the bot if running
+if ps aux | grep -v grep | grep "python -m bot.main" > /dev/null; then
+    echo "Stopping bot..."
+    ps aux | grep -v grep | grep "python -m bot.main" | awk '{print $2}' | xargs kill -9 2>/dev/null
+    sleep 2
+    echo -e "${GREEN}✓ Bot stopped${NC}"
+else
+    echo "Bot was not running"
+fi
+
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
+# Start the bot
+echo "Starting bot..."
+source venv/bin/activate
+nohup python -m bot.main > logs/bot.log 2>&1 &
+
+# Wait a moment and check if it started successfully
+sleep 3
+if ps aux | grep -v grep | grep "python -m bot.main" > /dev/null; then
+    PID=$(ps aux | grep -v grep | grep "python -m bot.main" | awk '{print $2}')
+    echo -e "${GREEN}✓ Bot restarted successfully!${NC}"
+    echo "Process ID: $PID"
+    echo "Logs: ~/telegram_bot/logs/bot.log"
+else
+    echo -e "${RED}✗ Failed to start bot. Check logs:${NC}"
+    tail -n 20 logs/bot.log
+    exit 1
+fi
+EOF
+
+chmod +x restart_bot.sh
+print_success "Restart script created"
+
+echo ""
+
+# Step 9: Create monitoring script
 print_info "Creating monitoring script..."
 cat > check_bot.sh << 'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -319,7 +379,7 @@ print_success "Monitoring script created"
 
 echo ""
 
-# Step 9: Create auto-start script for Termux:Boot
+# Step 10: Create auto-start script for Termux:Boot
 print_info "Setting up auto-start..."
 cat > ~/.termux/boot/start-bot.sh << 'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -372,7 +432,7 @@ print_success "Auto-start script created"
 
 echo ""
 
-# Step 10: Final instructions
+# Step 11: Final instructions
 echo "=========================================="
 echo -e "${GREEN}Installation Complete!${NC}"
 echo "=========================================="
@@ -386,14 +446,17 @@ echo ""
 print_info "2. Start the bot:"
 echo "   ./start_bot.sh"
 echo ""
-print_info "3. Check bot status:"
+print_info "3. Restart the bot:"
+echo "   ./restart_bot.sh"
+echo ""
+print_info "4. Check bot status:"
 echo "   ./check_bot.sh"
 echo ""
-print_info "4. Set up auto-start (optional):"
+print_info "5. Set up auto-start (optional):"
 echo "   - Install Termux:Boot from F-Droid"
 echo "   - Open Termux:Boot app and enable 'Run on boot'"
 echo ""
-print_info "5. Important: Disable battery optimization for Termux"
+print_info "6. Important: Disable battery optimization for Termux"
 echo "   - Go to Phone Settings → Apps → Termux"
 echo "   - Disable 'Battery optimization'"
 echo ""

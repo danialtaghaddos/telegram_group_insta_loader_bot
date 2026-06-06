@@ -1,0 +1,319 @@
+# Cline Rules - Telegram Group Instagram Loader Bot
+
+## Project Overview
+
+This is a **Telegram bot** that downloads and shares Instagram, Facebook, and YouTube media in Telegram group chats. The bot features a **moderator system** allowing multiple users to manage bot activation in any chat they are a member of.
+
+### Key Features
+
+- 📸 **Instagram/Facebook Media Download** - Download photos and videos from Instagram and Facebook posts
+- 📝 **Instagram Captions** - Automatically fetches and includes Instagram post captions with shared media
+- 🎵 **YouTube Audio Download** - Download YouTube videos as audio (MP3/M4A) with user confirmation
+- 👥 **Moderator System** - Multiple moderators can activate/deactivate the bot in their chats
+- 🚪 **Doorman Mode** - Automatically deletes join/leave system messages
+- 🔐 **Access Control** - Admin can grant/revoke moderator access
+- 📝 **Access Requests** - Users can request moderator access via `/access` command
+- 💾 **Media Caching** - Caches downloaded media to avoid re-downloading and enables fast forwarding
+
+---
+
+## Project Structure
+
+```
+telegram_group_insta_loader_bot/
+├── bot/
+│   ├── __init__.py           # Package initialization
+│   ├── main.py               # Bot entry point, command handlers registration
+│   ├── config.py             # Configuration and environment variables
+│   ├── handlers.py           # Message handlers for social media links
+│   ├── downloaders.py        # Media download logic (yt-dlp, gallery-dl)
+│   ├── worker.py             # Background worker for processing downloads
+│   ├── activation.py         # Chat activation/deactivation logic
+│   ├── moderators.py         # Moderator management and access requests
+│   ├── file_cache.py         # Media caching system
+│   ├── telethon_client.py    # Telethon client for username resolution
+│   ├── utils.py              # Utility functions
+│   └── video.py              # Video compression and metadata
+├── data/                     # Data storage directory (JSON files)
+│   ├── activated_chats.json  # List of chat IDs where bot is activated
+│   ├── doorman_chats.json    # List of chat IDs with doorman mode enabled
+│   ├── moderators.json       # List of moderator user IDs
+│   ├── access_requests.json  # Access request history
+│   ├── settings.json         # Bot settings
+│   └── tg_media_cache/       # Media cache directory
+├── .env.local                # Local environment variables
+├── requirements.txt          # Python dependencies
+├── Dockerfile                # Docker configuration
+└── README.md                 # Project documentation
+```
+
+---
+
+## Core Components
+
+### 1. `bot/main.py` - Entry Point
+
+- Initializes the Telegram bot using `python-telegram-bot` library
+- Registers all command handlers and message handlers
+- Starts the worker tasks and cache cleanup loop on startup
+- Handler order matters: callbacks → doorman → protected messages
+
+### 2. `bot/config.py` - Configuration
+
+- Loads environment variables from `.env` file
+- Key settings:
+  - `BOT_TOKEN` - Telegram bot token
+  - `ADMIN_USER_ID` - Admin's numeric Telegram user ID
+  - `CACHE_DIR` - Media cache directory (default: `/data/tg_media_cache`)
+  - `CACHE_TTL_HOURS` - Cache time-to-live (default: 24 hours)
+  - `MAX_MEDIA_PER_MESSAGE` - Maximum media files per message (default: 5)
+
+### 3. `bot/handlers.py` - Message Handling
+
+- `handle_message()` - Processes social media URLs from messages
+- `handle_youtube_callback()` - Handles YouTube audio download confirmation buttons
+- For YouTube URLs, shows inline buttons asking user to confirm audio download
+- For other URLs, immediately queues for download
+
+### 4. `bot/downloaders.py` - Media Download
+
+- `download_media()` - Main download function with cache checking
+- `download_with_ytdlp()` - Downloads using yt-dlp (Facebook, Instagram fallback)
+- `download_with_gallery_dl()` - Downloads Instagram content using gallery-dl
+- `download_youtube_audio()` - Downloads YouTube as audio (MP3/M4A)
+- `fetch_instagram_caption()` - Fetches Instagram post captions using yt-dlp metadata extraction
+- Supports cookies for private/restricted content
+
+### 5. `bot/worker.py` - Background Processing
+
+- Runs as 3 concurrent workers processing the download queue
+- Handles video compression before upload
+- Supports media groups for multiple files
+- Fetches Instagram captions and includes them with uploaded media (photos/videos)
+- For media groups (collections), caption is added to the first item
+- Captions are truncated to 1000 characters to respect Telegram's limit
+- Implements cache forwarding (forwards previously uploaded messages instead of re-uploading)
+- Tracks uploaded message IDs for cache forwarding optimization
+
+### 6. `bot/activation.py` - Chat Activation
+
+- `activate()` - Activates bot for current chat (moderators directly, others request approval)
+- `deactivate()` - Deactivates bot for current chat
+- `doorman()` - Toggles doorman mode (auto-delete join/leave messages)
+- `list_chats()` - Lists all activated chats (admin only)
+- Handles activation requests with admin approval workflow
+
+### 7. `bot/moderators.py` - Moderator Management
+
+- `access_command()` - Users request moderator access
+- `approve_command()` / `deny_command()` - Admin approves/denies requests
+- `add_moderator_command()` / `remove_moderator_command()` - Direct moderator management
+- `list_moderators_command()` - Lists all moderators with profile links
+- `help_command()` - Shows context-aware help based on user role
+
+### 8. `bot/file_cache.py` - Media Caching
+
+- Caches downloaded media files to avoid re-downloading
+- Stores metadata including URL, files, and last upload info
+- Supports cache forwarding (forwards cached Telegram messages instead of re-uploading)
+- Automatic cleanup of expired cache entries via background loop
+
+### 9. `bot/telethon_client.py` - Telethon Integration
+
+- Optional Telethon client for advanced features
+- Resolves usernames to user IDs without prior bot interaction
+- Gets chat links for private groups/channels
+
+---
+
+## Data Storage
+
+All data is stored in JSON files in `/data/`:
+
+| File | Purpose |
+|------|---------|
+| `activated_chats.json` | Chat IDs where bot is activated |
+| `doorman_chats.json` | Chat IDs with doorman mode enabled |
+| `moderators.json` | Moderator user IDs (format: `{user_id: []}`) |
+| `access_requests.json` | Access request history with status |
+| `settings.json` | Bot settings (e.g., `access_requests_enabled`) |
+| `activation_requests.json` | Pending chat activation requests |
+| `tg_media_cache/` | Cached media files with metadata |
+
+---
+
+## User Roles & Permissions
+
+### Admin
+
+- Single user defined by `ADMIN_USER_ID` environment variable
+- Full access to all bot features
+- Can approve/deny moderator access requests
+- Can approve/deny chat activation requests
+- Can add/remove moderators
+- Can list all activated chats and moderators
+
+### Moderator
+
+- Can activate/deactivate bot in any chat they are a member of
+- Can toggle doorman mode in their chats
+- Can use `/myChats` to check their status
+- Approved via `/access` request or directly by admin
+
+### Regular User
+
+- Can use `/access` to request moderator access (if enabled)
+- Can send social media links in activated chats to download media
+- Can use `/help` to see available commands
+
+---
+
+## Command Reference
+
+### Public Commands
+
+| Command | Description |
+|---------|-------------|
+| `/access` | Request moderator access |
+| `/help` | Show available commands |
+
+### Moderator Commands
+
+| Command | Description |
+|---------|-------------|
+| `/activate` | Activate bot for current chat |
+| `/deactivate` | Deactivate bot for current chat |
+| `/doorman` | Toggle doorman mode |
+| `/myChats` | Check moderator status |
+
+### Admin Commands
+
+| Command | Description |
+|---------|-------------|
+| `/listChats` | List all activated chats |
+| `/listmods` | List all moderators |
+| `/approve <user_id>` | Approve moderator access request |
+| `/deny <user_id>` | Deny moderator access request |
+| `/requests` | View pending access requests |
+| `/access_enabled` | Enable access requests |
+| `/access_disabled` | Disable access requests |
+| `/addmod @username` | Add moderator |
+| `/removemod @username` | Remove moderator |
+| `/load` | Reply to message with links to download |
+| `/activation_requests` | View pending chat activation requests |
+| `/approve_activation <chat_id>` | Approve chat activation |
+| `/deny_activation <chat_id>` | Deny chat activation |
+
+---
+
+## Important Implementation Details
+
+### Queue Processing
+
+- Uses `asyncio.Queue` with max size of 30 items
+- 3 concurrent worker tasks process the queue
+- Workers handle download, compression, and upload
+
+### Video Compression
+
+- Videos are compressed before upload to meet Telegram's file size limits
+- Compression is skipped if file is from cache (already compressed)
+- Uses FFmpeg for compression
+
+### Cache System
+
+- Cache key is SHA256 hash of URL
+- Cache TTL defaults to 24 hours
+- Cache forwarding: if same URL was recently uploaded, forwards the existing Telegram message instead of re-uploading
+- Background cleanup runs every 60 minutes by default
+
+### YouTube Handling
+
+- YouTube URLs trigger an inline keyboard asking user to confirm audio download
+- User can choose "🎵 Download Audio" or "❌ Cancel"
+- Default audio format is M4A (configurable via `YOUTUBE_AUDIO_FORMAT`)
+
+### Cookie Support
+
+- Instagram cookies: `COOKIES_TXT` environment variable
+- Facebook cookies: `FACEBOOK_COOKIES_TXT` environment variable
+- YouTube cookies: `YOUTUBE_COOKIES_TXT` environment variable
+- Cookies help prevent 403 errors and access private content
+
+---
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `python-telegram-bot==21.0` | Telegram Bot API |
+| `python-dotenv==1.2.2` | Environment variable management |
+| `yt-dlp==2026.3.17` | Download videos from YouTube, Instagram, Facebook |
+| `requests==2.32.0` | HTTP requests |
+| `gallery-dl==1.31.10` | Download Instagram galleries |
+| `telethon==1.43.2` | MTProto API for advanced features |
+
+### System Requirements
+
+- **Python 3.9+** (Python 3.13 requires python-telegram-bot >= 21.0)
+- **FFmpeg** - Required for audio/video processing
+- **Node.js** (optional) - Helps yt-dlp extract YouTube formats
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
+| `ADMIN_USER_ID` | Yes | Admin's numeric Telegram user ID |
+| `DEBUG_BOT` | No | Enable debug mode (all chats activated) |
+| `TELEGRAM_API_ID` | No | Telegram API ID for Telethon |
+| `TELEGRAM_API_HASH` | No | Telegram API HASH for Telethon |
+| `TELEGRAM_SESSION_STRING` | No | Telethon session string |
+| `YOUTUBE_AUDIO_FORMAT` | No | Audio format: `mp3` or `m4a` (default: `m4a`) |
+| `COOKIES_TXT` | No | Instagram cookies in Netscape format |
+| `FACEBOOK_COOKIES_TXT` | No | Facebook cookies in Netscape format |
+| `YOUTUBE_COOKIES_TXT` | No | YouTube cookies in Netscape format |
+| `CACHE_DIR` | No | Cache directory (default: `/data/tg_media_cache`) |
+| `CACHE_TTL_HOURS` | No | Cache TTL in hours (default: 24) |
+| `CACHE_CLEANUP_INTERVAL_MINUTES` | No | Cleanup interval (default: 60) |
+| `CACHE_ENABLE_FORWARDING` | No | Enable cache forwarding (default: true) |
+
+---
+
+## Common Workflows
+
+### Adding a New Moderator
+
+1. Admin uses `/addmod @username` or `/addmod <user_id>`
+2. Bot resolves username to user ID (via bot API or Telethon)
+3. User is added to moderators and notified
+4. New moderator can now use `/activate` in any chat
+
+### User Requesting Moderator Access
+
+1. User sends `/access` command
+2. Bot checks if requests are enabled and user doesn't have pending request
+3. Request is saved and admin is notified
+4. Admin uses `/approve <user_id>` or `/deny <user_id>`
+5. User is notified of the decision
+
+### Downloading Media
+
+1. User sends message with social media URL in activated chat
+2. Bot extracts URLs and queues for download
+3. For YouTube, user is asked to confirm audio download
+4. Worker downloads media, compresses if needed
+5. Media is uploaded to chat with reply to original message
+6. Cache is updated for future forwarding
+
+---
+
+## Notes for Future Development
+
+1. **Error Handling**: The bot uses try/except blocks extensively to handle network failures and API errors gracefully
+2. **Async Architecture**: All I/O operations are async for better performance
+3. **Data Persistence**: All state is persisted to JSON files for reliability
+4. **Modular Design**: Each feature is in its own module for maintainability
+5. **Cache Optimization**: Cache forwarding significantly reduces bandwidth and processing time for popular content

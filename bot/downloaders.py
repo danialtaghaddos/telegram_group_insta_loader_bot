@@ -6,6 +6,40 @@ from .file_cache import restore_cache_to_temp, add_cache_entry
 
 TMP_PATH = tempfile.gettempdir()
 
+
+async def fetch_instagram_caption(url: str) -> str:
+    """Fetch the caption/description from an Instagram post using yt-dlp"""
+    try:
+        cookiefile = get_cookies_file()
+        
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "cookiefile": cookiefile,
+            "extract_flat": False,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
+        }
+        
+        def _extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                # Instagram captions are typically in 'description' field
+                return info.get("description", "")
+        
+        # Run in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        caption = await loop.run_in_executor(None, _extract)
+        
+        if caption:
+            logger.info(f"Fetched Instagram caption: {caption[:50]}...")
+        return caption or ""
+    except Exception as e:
+        logger.warning(f"Failed to fetch Instagram caption: {e}")
+        return ""
+
 def get_cookies_file():
     """Returns Instagram cookies file (existing behavior)"""
     path = f"{TMP_PATH}/cookies.txt"
