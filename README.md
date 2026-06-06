@@ -133,7 +133,21 @@ The bot stores data in JSON files in the `/data` directory:
 - `access_requests.json` - Access request history
 - `settings.json` - Bot settings (e.g., access requests enabled/disabled)
 
-## Deployment
+## Deployment Options
+
+### Android Phone (Recommended - Free & No IP Blocking)
+
+Deploy on an Android phone using Termux for free hosting with a residential IP (avoids Instagram/YouTube blocking):
+
+```bash
+# Quick setup on Android/Termux
+pkg install python nodejs ffmpeg git
+git clone <your-repo-url>
+cd telegram_group_insta_loader_bot
+./install_on_termux.sh
+```
+
+See [QUICK_START_ANDROID.md](QUICK_START_ANDROID.md) for complete instructions.
 
 ### Docker
 
@@ -169,8 +183,8 @@ python -m bot.main
 
 ## Requirements
 
-- Python 3.9+
-- python-telegram-bot library
+- Python 3.9+ (Python 3.13 requires python-telegram-bot >= 21.0)
+- python-telegram-bot >= 21.0 (for Python 3.13 compatibility)
 - Other dependencies in `requirements.txt`
 - **FFmpeg** - Required for audio/video processing
 - **Node.js** (optional but recommended) - JavaScript runtime for yt-dlp to properly extract YouTube formats

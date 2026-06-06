@@ -1,4 +1,4 @@
-python-telegram-bot==20.6
+python-telegram-bot==21.0
 python-dotenv==1.2.2
 yt-dlp==2026.3.17
 requests==2.32.0

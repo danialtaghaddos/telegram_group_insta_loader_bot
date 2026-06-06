@@ -120,7 +120,7 @@ def main():
     # example protected message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, protected_handler))
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
