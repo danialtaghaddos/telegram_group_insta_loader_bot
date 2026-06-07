@@ -9,7 +9,8 @@ from .config import queue, logger
 
 def is_youtube_url(url: str) -> bool:
     """Check if the URL is a YouTube URL"""
-    return "youtube.com" in url or "youtu.be" in url
+    url_lower = url.lower()
+    return ("youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower)
 
 
 async def handle_message(urls: list[Any], update: Update, context: ContextTypes.DEFAULT_TYPE, reply_to_message_id: int = None):

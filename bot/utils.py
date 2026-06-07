@@ -7,7 +7,7 @@ def extract_social_urls(text: str):
     # Extended pattern to include YouTube URLs
     pattern = (
         r"https?://(?:www\.)?"
-        r"(?:instagram\.com|facebook\.com|fb\.watch|fb\.com|youtube\.com|youtu\.be)/[^\s]+"
+        r"(?:instagram\.com|facebook\.com|fb\.watch|fb\.com|youtube\.com|m\.youtube\.com|youtu\.be)/[^\s]+"
     )
     urls = re.findall(pattern, text)
 
@@ -37,7 +37,9 @@ def extract_social_urls(text: str):
             continue
 
         # Skip YouTube channels, user pages, playlists, and other non-video URLs
-        if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+        # Handle both youtube.com and m.youtube.com (mobile)
+        youtube_host = 'youtube.com' in url_lower or 'm.youtube.com' in url_lower
+        if youtube_host or 'youtu.be' in url_lower:
             # youtu.be URLs are always valid (short URLs for specific videos)
             if 'youtu.be' in url_lower:
                 pass  # Allow

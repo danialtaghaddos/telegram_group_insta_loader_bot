@@ -375,7 +375,8 @@ async def download_media(url: str, temp_dir: str):
         return cached_files
 
     # YouTube: download as audio
-    if "youtube.com" in url or "youtu.be" in url:
+    url_lower = url.lower()
+    if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
         try:
             # Default to M4A format for better quality
             audio_format = os.getenv("YOUTUBE_AUDIO_FORMAT", "m4a").lower()

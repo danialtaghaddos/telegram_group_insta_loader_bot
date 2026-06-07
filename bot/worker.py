@@ -72,11 +72,12 @@ async def worker():
                 chat_id = status_msg.chat_id if status_msg else None
                 if chat_id is None:
                     chat_id = update.effective_chat.id if update.effective_chat else None
-            if "youtube.com" in url or "youtu.be" in url:
+            url_lower = url.lower()
+            if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
                 platform = "YouTube"
-            elif "instagram.com" in url:
+            elif "instagram.com" in url_lower:
                 platform = "Instagram"
-            elif "facebook.com" in url or "fb.watch" in url or "fb.com" in url:
+            elif "facebook.com" in url_lower or "fb.watch" in url_lower or "fb.com" in url_lower:
                 platform = "Facebook"
             else:
                 platform = "Unknown"
