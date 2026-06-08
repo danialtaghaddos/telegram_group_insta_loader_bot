@@ -91,6 +91,7 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `COOKIES_TXT` | Instagram cookies in netscape format (optional, for private posts) |
 | `FACEBOOK_COOKIES_TXT` | Facebook cookies in netscape format (optional, for private videos) |
 | `YOUTUBE_COOKIES_TXT` | YouTube cookies in netscape format (optional, helps prevent 403 errors) |
+| `JSONBIN_API_KEY` | JSONBin.io API key for cloud storage (optional, enables cloud sync) |
 
 **Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
 
@@ -133,6 +134,61 @@ The bot stores data in JSON files in the `/data` directory:
 - `moderators.json` - List of moderator user IDs
 - `access_requests.json` - Access request history
 - `settings.json` - Bot settings (e.g., access requests enabled/disabled)
+
+### Cloud Storage with JSONBin.io (Optional)
+
+The bot supports cloud-based storage using [JSONBin.io](https://jsonbin.io) for synchronizing data across multiple instances or deployments. When configured, the bot will:
+
+1. **Auto-create bins** on first use if they don't exist (no manual creation needed!)
+2. Store data in the cloud via JSONBin.io API
+3. Keep a local fallback for reliability
+4. Cache data in memory to minimize API calls
+
+#### Quick Setup (Fully Automatic)
+
+The easiest way to set up cloud storage - **only one environment variable needed**:
+
+1. **Create a JSONBin.io Account**
+   - Go to [jsonbin.io](https://jsonbin.io) and sign up for a free account
+   - Navigate to [API Keys](https://jsonbin.io/app/api-keys) and copy your Master Key
+
+2. **Configure Environment Variables**
+
+   ```bash
+   # Add to your .env.local or environment
+   JSONBIN_API_KEY=your_master_key_here
+   ```
+
+   That's it! No other configuration needed.
+
+3. **Start the Bot**
+   The bot will automatically:
+   - Create a master metadata bin to store all bin IDs
+   - Create three data bins: `activated_chats`, `doorman_chats`, `activation_requests`
+   - Log the created bin IDs for your reference
+
+   Example log output:
+
+   ```
+   ✅ Created master metadata bin with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
+   ✅ Created JSONBin 'activated_chats' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
+   ✅ Created JSONBin 'doorman_chats' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
+   ✅ Created JSONBin 'activation_requests' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+#### How It Works
+
+- **Master Metadata Bin**: The bot creates a special bin called `telegram_bot_storage_metadata` that stores the IDs of all other bins
+- **Auto-Discovery**: On subsequent starts, the bot reads the master bin to find existing bin IDs
+- **Auto-Creation**: If bins don't exist, they are created automatically
+- **Local Fallback**: If JSONBin.io is unavailable, data is stored locally
+
+#### Notes
+
+- **Free Tier Limits**: JSONBin.io free tier allows up to 100KB per bin and has request limits
+- **Fallback Mode**: If JSONBin.io is unavailable, the bot falls back to local file storage
+- **No Configuration**: If you don't set the JSONBin API key, the bot uses local storage only
+- **Fully Automatic**: All bin IDs are managed automatically - no manual configuration needed
 
 ## Deployment Options
 

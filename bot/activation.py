@@ -1,51 +1,22 @@
-import json
 import os
-from pathlib import Path
 
 from telegram import Update
 from telegram.ext import ContextTypes
 from .config import logger
+from .storage import (
+    load_activated_chats,
+    save_activated_chats,
+    load_doorman_chats,
+    save_doorman_chats,
+    load_activation_requests,
+    save_activation_requests,
+)
 
 DEBUG = bool(os.getenv("DEBUG_BOT"))
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your Telegram numeric user ID
-DATA_FILE = "/data/activated_chats.json"
-DOORMAN_FILE = "/data/doorman_chats.json"
-ACTIVATION_REQUESTS_FILE = "/data/activation_requests.json"
 
 # Import moderator functions
 from .moderators import is_admin as check_is_admin, is_moderator
-
-def load_activated_chats() -> set[int]:
-    if not os.path.exists(DATA_FILE):
-        return set()
-    with open(DATA_FILE, "r") as f:
-        return set(json.load(f))
-
-def save_activated_chats(chats: set[int]) -> None:
-    with open(DATA_FILE, "w") as f:
-        json.dump(list(chats), f)
-
-def load_doorman_chats() -> set[int]:
-    if not os.path.exists(DOORMAN_FILE):
-        return set()
-    with open(DOORMAN_FILE, "r") as f:
-        return set(json.load(f))
-
-def save_doorman_chats(chats: set[int]) -> None:
-    with open(DOORMAN_FILE, "w") as f:
-        json.dump(list(chats), f)
-
-def load_activation_requests() -> list[dict]:
-    """Load pending activation requests from file."""
-    if not os.path.exists(ACTIVATION_REQUESTS_FILE):
-        return []
-    with open(ACTIVATION_REQUESTS_FILE, "r") as f:
-        return json.load(f)
-
-def save_activation_requests(requests: list[dict]) -> None:
-    """Save activation requests to file."""
-    with open(ACTIVATION_REQUESTS_FILE, "w") as f:
-        json.dump(requests, f)
 
 ACTIVATED_CHATS: set[int] = load_activated_chats()
 DOORMAN_CHATS: set[int] = load_doorman_chats()
