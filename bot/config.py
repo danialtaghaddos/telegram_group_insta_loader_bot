@@ -3,6 +3,12 @@ import os
 import asyncio
 import logging
 import tempfile
+from dotenv import load_dotenv
+
+# Load environment variables from .env.local or .env file
+load_dotenv(".env.local")
+load_dotenv()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 TMP_PATH = tempfile.gettempdir()

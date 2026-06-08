@@ -290,7 +290,7 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Available commands:\n"
                     "/activate - Activate bot for current chat\n"
                     "/deactivate - Deactivate bot for current chat\n"
-                    "/doorman - Toggle doorman mode (auto-delete join/leave messages)\n"
+                    "/doorman - Toggle doorman mode to auto-delete join and leave messages\n"
                     "/myChats - List chats you control\n"
                     "/help - Show all available commands"
                 ),
@@ -570,7 +570,11 @@ async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     text += "\nUse /approve <user_id> or /deny <user_id>"
     
-    await update.message.reply_text(text, parse_mode="Markdown")
+    try:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Failed to send help message with Markdown: {e}")
+        await update.message.reply_text(text)
 
 
 async def list_moderators_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,45 +663,49 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_mod = user_id in moderators and moderators[user_id]
     admin = is_admin(update)
     
-    text = "🤖 **Bot Commands Help**\n\n"
+    text = "🤖 <b>Bot Commands Help</b>\n\n"
     
     if admin:
-        text += "**Admin Commands:**\n"
+        text += "<b>Admin Commands:</b>\n"
         text += "/activate - Activate bot for current chat\n"
         text += "/deactivate - Deactivate bot for current chat\n"
-        text += "/doorman - Toggle doorman mode (auto-delete join/leave messages)\n"
+        text += "/doorman - Toggle doorman mode to auto-delete join and leave messages\n"
         text += "/listChats - List all activated chats\n"
         text += "/activation_requests - View pending bot activation requests\n"
-        text += "/approve_activation <chat_id> - Approve bot activation for a chat\n"
-        text += "/deny_activation <chat_id> - Deny bot activation for a chat\n"
+        text += "/approve_activation chat_id - Approve bot activation for a chat\n"
+        text += "/deny_activation chat_id - Deny bot activation for a chat\n"
         text += "/listmods - List all moderators with profile links\n"
-        text += "/approve <user_id> - Approve moderator access request\n"
-        text += "/deny <user_id> - Deny moderator access request\n"
+        text += "/approve user_id - Approve moderator access request\n"
+        text += "/deny user_id - Deny moderator access request\n"
         text += "/requests - View pending moderator access requests\n"
         text += "/access_enabled - Enable access requests\n"
         text += "/access_disabled - Disable access requests\n"
         text += "/addmod @username - Add moderator\n"
         text += "/removemod @username - Remove moderator\n"
-        text += "/load - Reply to a message with links to download content (works in any chat)\n\n"
+        text += "/load - Reply to a message with links to download content, works in any chat\n\n"
     elif is_mod:
-        text += "**Moderator Commands:**\n"
+        text += "<b>Moderator Commands:</b>\n"
         text += "/activate - Activate bot for current chat\n"
         text += "/deactivate - Deactivate bot for current chat\n"
         text += "/doorman - Toggle doorman mode\n"
         text += "/myChats - Check your moderator status\n"
         text += "/help - Show this help message\n\n"
     else:
-        text += "**Available Commands:**\n"
+        text += "<b>Available Commands:</b>\n"
         text += "/access - Request moderator access\n"
         text += "/help - Show this help message\n\n"
     
-    text += "**Bot Description:**\n"
+    text += "<b>Bot Description:</b>\n"
     text += "This bot downloads and shares media in Telegram chats.\n"
     text += "Moderators can activate the bot in their chats and manage doorman settings.\n\n"
-    text += "**Supported Platforms:**\n"
+    text += "<b>Supported Platforms:</b>\n"
     text += "• Instagram - Photos and videos\n"
     text += "• Facebook - Videos\n"
-    text += "• YouTube - Audio (MP3/M4A)\n\n"
+    text += "• YouTube - Audio: MP3 or M4A\n\n"
     text += "Simply send links in an activated chat to download media."
     
-    await update.message.reply_text(text, parse_mode="Markdown")
+    try:
+        await update.message.reply_text(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to send help message with HTML: {e}")
+        await update.message.reply_text(text)
