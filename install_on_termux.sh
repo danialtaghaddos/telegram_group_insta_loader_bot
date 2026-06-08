@@ -135,19 +135,6 @@ TELEGRAM_SESSION_STRING=
 # Your Telegram numeric user ID (can be obtained from @userinfobot)
 ADMIN_USER_ID=your_user_id
 
-# Cache Configuration
-# Directory path for storing cached media files
-CACHE_DIR=/data/data/com.termux/files/home/telegram_bot/data/tg_media_cache
-
-# Cache TTL (Time To Live) in hours - how long cached files are kept
-CACHE_TTL_HOURS=24
-
-# Interval in minutes between cache cleanup runs
-CACHE_CLEANUP_INTERVAL_MINUTES=60
-
-# Enable or disable cache forwarding (true/false)
-CACHE_ENABLE_FORWARDING=true
-
 # Cookie Configuration (optional)
 # Cookies for general downloads (cookies.txt format)
 COOKIES_TXT=

@@ -13,13 +13,11 @@ This is a **Telegram bot** that downloads and shares Instagram, Facebook, and Yo
 - 🚪 **Doorman Mode** - Automatically deletes join/leave system messages
 - 🔐 **Access Control** - Admin can grant/revoke moderator access
 - 📝 **Access Requests** - Users can request moderator access via `/access` command
-- 💾 **Media Caching** - Caches downloaded media to avoid re-downloading and enables fast forwarding
-
 ---
 
 ## Project Structure
 
-```
+```txt
 telegram_group_insta_loader_bot/
 ├── bot/
 │   ├── __init__.py           # Package initialization
@@ -30,7 +28,6 @@ telegram_group_insta_loader_bot/
 │   ├── worker.py             # Background worker for processing downloads
 │   ├── activation.py         # Chat activation/deactivation logic
 │   ├── moderators.py         # Moderator management and access requests
-│   ├── file_cache.py         # Media caching system
 │   ├── telethon_client.py    # Telethon client for username resolution
 │   ├── utils.py              # Utility functions
 │   └── video.py              # Video compression and metadata
@@ -40,7 +37,7 @@ telegram_group_insta_loader_bot/
 │   ├── moderators.json       # List of moderator user IDs
 │   ├── access_requests.json  # Access request history
 │   ├── settings.json         # Bot settings
-│   └── tg_media_cache/       # Media cache directory
+directory
 ├── .env.local                # Local environment variables
 ├── requirements.txt          # Python dependencies
 ├── Dockerfile                # Docker configuration
@@ -55,7 +52,7 @@ telegram_group_insta_loader_bot/
 
 - Initializes the Telegram bot using `python-telegram-bot` library
 - Registers all command handlers and message handlers
-- Starts the worker tasks and cache cleanup loop on startup
+- Starts the worker tasks
 - Handler order matters: callbacks → doorman → protected messages
 
 ### 2. `bot/config.py` - Configuration
@@ -64,8 +61,6 @@ telegram_group_insta_loader_bot/
 - Key settings:
   - `BOT_TOKEN` - Telegram bot token
   - `ADMIN_USER_ID` - Admin's numeric Telegram user ID
-  - `CACHE_DIR` - Media cache directory (default: `/data/tg_media_cache`)
-  - `CACHE_TTL_HOURS` - Cache time-to-live (default: 24 hours)
   - `MAX_MEDIA_PER_MESSAGE` - Maximum media files per message (default: 5)
 
 ### 3. `bot/handlers.py` - Message Handling
@@ -77,7 +72,7 @@ telegram_group_insta_loader_bot/
 
 ### 4. `bot/downloaders.py` - Media Download
 
-- `download_media()` - Main download function with cache checking
+- `download_media()` - Main download function
 - `download_with_ytdlp()` - Downloads using yt-dlp (Facebook, Instagram fallback)
 - `download_with_gallery_dl()` - Downloads Instagram content using gallery-dl
 - `download_youtube_audio()` - Downloads YouTube as audio (MP3/M4A)
@@ -92,8 +87,6 @@ telegram_group_insta_loader_bot/
 - Fetches Instagram captions and includes them with uploaded media (photos/videos)
 - For media groups (collections), caption is added to the first item
 - Captions are truncated to 1000 characters to respect Telegram's limit
-- Implements cache forwarding (forwards previously uploaded messages instead of re-uploading)
-- Tracks uploaded message IDs for cache forwarding optimization
 
 ### 6. `bot/activation.py` - Chat Activation
 
@@ -110,13 +103,6 @@ telegram_group_insta_loader_bot/
 - `add_moderator_command()` / `remove_moderator_command()` - Direct moderator management
 - `list_moderators_command()` - Lists all moderators with profile links
 - `help_command()` - Shows context-aware help based on user role
-
-### 8. `bot/file_cache.py` - Media Caching
-
-- Caches downloaded media files to avoid re-downloading
-- Stores metadata including URL, files, and last upload info
-- Supports cache forwarding (forwards cached Telegram messages instead of re-uploading)
-- Automatic cleanup of expired cache entries via background loop
 
 ### 9. `bot/telethon_client.py` - Telethon Integration
 
@@ -138,8 +124,6 @@ All data is stored in JSON files in `/data/`:
 | `access_requests.json` | Access request history with status |
 | `settings.json` | Bot settings (e.g., `access_requests_enabled`) |
 | `activation_requests.json` | Pending chat activation requests |
-| `tg_media_cache/` | Cached media files with metadata |
-
 ---
 
 ## User Roles & Permissions
@@ -217,15 +201,8 @@ All data is stored in JSON files in `/data/`:
 ### Video Compression
 
 - Videos are compressed before upload to meet Telegram's file size limits
-- Compression is skipped if file is from cache (already compressed)
 - Uses FFmpeg for compression
 
-### Cache System
-
-- Cache key is SHA256 hash of URL
-- Cache TTL defaults to 24 hours
-- Cache forwarding: if same URL was recently uploaded, forwards the existing Telegram message instead of re-uploading
-- Background cleanup runs every 60 minutes by default
 
 ### YouTube Handling
 
@@ -275,11 +252,6 @@ All data is stored in JSON files in `/data/`:
 | `COOKIES_TXT` | No | Instagram cookies in Netscape format |
 | `FACEBOOK_COOKIES_TXT` | No | Facebook cookies in Netscape format |
 | `YOUTUBE_COOKIES_TXT` | No | YouTube cookies in Netscape format |
-| `CACHE_DIR` | No | Cache directory (default: `/data/tg_media_cache`) |
-| `CACHE_TTL_HOURS` | No | Cache TTL in hours (default: 24) |
-| `CACHE_CLEANUP_INTERVAL_MINUTES` | No | Cleanup interval (default: 60) |
-| `CACHE_ENABLE_FORWARDING` | No | Enable cache forwarding (default: true) |
-
 ---
 
 ## Common Workflows
@@ -306,7 +278,6 @@ All data is stored in JSON files in `/data/`:
 3. For YouTube, user is asked to confirm audio download
 4. Worker downloads media, compresses if needed
 5. Media is uploaded to chat with reply to original message
-6. Cache is updated for future forwarding
 
 ---
 
@@ -316,4 +287,3 @@ All data is stored in JSON files in `/data/`:
 2. **Async Architecture**: All I/O operations are async for better performance
 3. **Data Persistence**: All state is persisted to JSON files for reliability
 4. **Modular Design**: Each feature is in its own module for maintainability
-5. **Cache Optimization**: Cache forwarding significantly reduces bandwidth and processing time for popular content

@@ -5,7 +5,6 @@ import json
 import requests as requests_module
 
 from .config import logger
-from .file_cache import restore_cache_to_temp, add_cache_entry
 
 TMP_PATH = tempfile.gettempdir()
 
@@ -368,11 +367,6 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
 
 
 async def download_media(url: str, temp_dir: str):
-    # Check cache first
-    cached_files = restore_cache_to_temp(url, temp_dir)
-    if cached_files:
-        logger.info(f"Cache hit for {url}, returning {len(cached_files)} cached file(s)")
-        return cached_files
 
     # YouTube: download as audio
     url_lower = url.lower()
@@ -391,17 +385,12 @@ async def download_media(url: str, temp_dir: str):
     if "instagram.com" in url:
         files = await download_with_gallery_dl(url, temp_dir)
         if files:
-            # Add to cache after successful download
-            add_cache_entry(url, files)
             return files
         logger.info("gallery-dl failed for Instagram, falling back to yt-dlp")
 
     # Facebook or fallback: use yt-dlp with platform-specific cookies
     try:
         files = await download_with_ytdlp(url, temp_dir)
-        if files:
-            # Add to cache after successful download
-            add_cache_entry(url, files)
         return files
     except Exception as e:
         logger.error(f"Download failed for {url}: {e}")

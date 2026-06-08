@@ -9,8 +9,7 @@ from bot.utils import get_file_size_mb
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
-from .config import queue, logger, CACHE_ENABLE_FORWARDING
-from .file_cache import get_cache_metadata, add_cache_entry, is_cache_valid
+from .config import queue, logger
 
 
 def is_audio_file(file_path: str) -> bool:
@@ -90,60 +89,8 @@ async def worker():
             temp_dir = tempfile.mkdtemp()
 
             try:
-                # Check if we can forward a previous upload instead of downloading
-                if CACHE_ENABLE_FORWARDING:
-                    meta = get_cache_metadata(url)
-                    if meta and 'last_upload' in meta:
-                        last_upload = meta['last_upload']
-                        chat_id_from_meta = last_upload.get('chat_id')
-                        message_ids = last_upload.get('message_ids', [])
-                        if chat_id_from_meta and message_ids:
-                            try:
-                                # Determine target chat_id
-                                target_chat_id = None
-                                if message:
-                                    target_chat_id = message.chat_id
-                                elif status_msg:
-                                    target_chat_id = status_msg.chat_id
-                                else:
-                                    target_chat_id = update.effective_chat.id if update.effective_chat else None
-                                if target_chat_id:
-                                    # Determine the message ID to reply to (the original request)
-                                    reply_to_id = original_reply_to_message_id
-                                    if reply_to_id is None and message:
-                                        reply_to_id = message.message_id
-                                    
-                                    # Forward each message with a reply indicator
-                                    forwarded = []
-                                    for msg_id in message_ids:
-                                        try:
-                                            # Then forward the cached message (reply to the emoji message)
-                                            fwd = await context.bot.forward_message(
-                                                chat_id=target_chat_id,
-                                                from_chat_id=chat_id_from_meta,
-                                                message_id=msg_id
-                                            )
-                                            # First send a reply with 👇 emoji to the original message
-                                            emoji_msg = await context.bot.send_message(
-                                                chat_id=target_chat_id,
-                                                text="👆 👆 👆",
-                                                reply_to_message_id=reply_to_id
-                                            )
-                                            forwarded.append(fwd)
-                                        except Exception as e:
-                                            logger.warning(f"Failed to forward message {msg_id} from {chat_id_from_meta}: {e}")
-                                    if forwarded:
-                                        logger.info(f"Forwarded {len(forwarded)} message(s) for {url}")
-                                        try:
-                                            await status_msg.delete()
-                                        except:
-                                            pass
-                                        continue  # Skip download and upload
-                            except Exception as e:
-                                logger.warning(f"Forwarding failed for {url}, falling back to download: {e}")
-
-                # Check if we're using cached files (to skip re-compression)
-                is_from_cache = is_cache_valid(url)
+                # Download media
+                
                 files = await download_media(url, temp_dir)
 
                 if not files:
@@ -213,12 +160,11 @@ async def worker():
                     elif file_path.lower().endswith(".mp4"):
                         # Skip compression if file is from cache (already compressed)
                         original_file_path = file_path
-                        if not is_from_cache:
-                            try:
-                                await status_msg.edit_text(f"⚡ Processing ...")
-                            except:
-                                pass
-                            file_path = compress_video(file_path)
+                        try:
+                            await status_msg.edit_text(f"⚡ Processing ...")
+                        except:
+                            pass
+                        file_path = compress_video(file_path)
                         # Update files list if compression created a new file
                         if file_path != original_file_path and len(files) == 1:
                             files = [file_path]
@@ -288,9 +234,7 @@ async def worker():
                             pass
                         elif f.lower().endswith(".mp4"):
                             original_f = f
-                            # Skip compression if file is from cache (already compressed)
-                            if not is_from_cache:
-                                f = compress_video(f)
+                            f = compress_video(f)
                             # Track the updated file path
                             if f != original_f:
                                 files[i] = f
@@ -327,12 +271,7 @@ async def worker():
                             uploaded_chat_id = sent_msgs[0].chat_id
                             uploaded_message_ids = [m.message_id for m in sent_msgs]
 
-                # Update cache with upload info for future forwarding
-                if not is_from_cache and uploaded_chat_id and uploaded_message_ids:
-                    add_cache_entry(url, files, last_upload={
-                        "chat_id": uploaded_chat_id,
-                        "message_ids": uploaded_message_ids
-                    })
+                # No caching: skip updating any cache metadata
 
                 try:
                     await status_msg.delete()

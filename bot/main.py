@@ -37,16 +37,13 @@ from .moderators import (
     load_command,
     is_moderator,
 )
-from .config import BOT_TOKEN, CACHE_TTL_HOURS, CACHE_CLEANUP_INTERVAL_MINUTES
-from .file_cache import start_cleanup_loop
+from .config import BOT_TOKEN
 from .handlers import handle_message, handle_youtube_callback
 from .worker import worker
 
 async def on_startup(app):
     for _ in range(3):
         asyncio.create_task(worker())
-    # Start cache cleanup loop
-    start_cleanup_loop()
 
 
 async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
