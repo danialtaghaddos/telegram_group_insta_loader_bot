@@ -175,13 +175,11 @@ All data is stored in JSON files in `/data/`:
 | Command | Description |
 |---------|-------------|
 | `/listChats` | List all activated chats |
-| `/listmods` | List all moderators |
+| `/listMods` | List all moderators |
 | `/approve <user_id>` | Approve moderator access request |
 | `/deny <user_id>` | Deny moderator access request |
 | `/requests` | View pending access requests |
-| `/access_enabled` | Enable access requests |
-| `/access_disabled` | Disable access requests |
-| `/addmod @username` | Add moderator |
+| `/addMods @username` | Add moderator |
 | `/removemod @username` | Remove moderator |
 | `/load` | Reply to message with links to download |
 | `/activation_requests` | View pending chat activation requests |
@@ -258,7 +256,7 @@ All data is stored in JSON files in `/data/`:
 
 ### Adding a New Moderator
 
-1. Admin uses `/addmod @username` or `/addmod <user_id>`
+1. Admin uses `/addMods @username` or `/addMods <user_id>`
 2. Bot resolves username to user ID (via bot API or Telethon)
 3. User is added to moderators and notified
 4. New moderator can now use `/activate` in any chat

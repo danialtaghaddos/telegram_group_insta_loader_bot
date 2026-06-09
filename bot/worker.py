@@ -9,7 +9,7 @@ from bot.utils import get_file_size_mb
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
-from .config import queue, logger
+from .config import queue, logger, active_tasks
 
 
 def is_audio_file(file_path: str) -> bool:
@@ -48,15 +48,42 @@ def get_audio_duration(file_path: str) -> int:
         logger.warning(f"Failed to get audio duration for {file_path}: {e}")
         return 0
 
+
+def check_cancelled(task_id: int) -> bool:
+    """Check if a task has been cancelled"""
+    if task_id not in active_tasks:
+        return False
+    return active_tasks[task_id].get("cancelled", False)
+
+
+def cleanup_task(task_id: int):
+    """Clean up task resources"""
+    if task_id in active_tasks:
+        task_info = active_tasks[task_id]
+        # Clean up temp directory if it exists
+        if task_info.get("temp_dir"):
+            try:
+                shutil.rmtree(task_info["temp_dir"], ignore_errors=True)
+                logger.info(f"Cleaned up temp directory {task_info['temp_dir']} for task {task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp directory for task {task_id}: {e}")
+        # Remove from active tasks
+        del active_tasks[task_id]
+
+
 async def worker():
     while True:
         result = await queue.get()
-        # Support both old 5-tuple and new 6-tuple format
-        if len(result) == 6:
+        # Support both old 6-tuple and new 7-tuple format (with task_id)
+        if len(result) == 7:
+            update, context, url, status_msg, original_reply_to_message_id, message, task_id = result
+        elif len(result) == 6:
             update, context, url, status_msg, original_reply_to_message_id, message = result
+            task_id = None
         else:
             update, context, url, status_msg, original_reply_to_message_id = result
             message = update.message
+            task_id = None
 
         try:
             # Fallback: try to get message from update, then from status_msg.reply_to_message
@@ -71,6 +98,7 @@ async def worker():
                 chat_id = status_msg.chat_id if status_msg else None
                 if chat_id is None:
                     chat_id = update.effective_chat.id if update.effective_chat else None
+            
             url_lower = url.lower()
             if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
                 platform = "YouTube"
@@ -88,10 +116,31 @@ async def worker():
 
             temp_dir = tempfile.mkdtemp()
 
+            # Store temp_dir in active_tasks for cleanup on cancellation
+            if task_id and task_id in active_tasks:
+                active_tasks[task_id]["temp_dir"] = temp_dir
+
             try:
+                # Check if cancelled before starting download
+                if check_cancelled(task_id):
+                    logger.info(f"Task {task_id} cancelled before download")
+                    try:
+                        await status_msg.edit_text("❌ Download cancelled.")
+                    except:
+                        pass
+                    continue
+
                 # Download media
-                
                 files = await download_media(url, temp_dir)
+
+                # Check if cancelled after download
+                if check_cancelled(task_id):
+                    logger.info(f"Task {task_id} cancelled after download")
+                    try:
+                        await status_msg.edit_text("❌ Download cancelled.")
+                    except:
+                        pass
+                    continue
 
                 if not files:
                     logger.warning(f"No media found in url: {url}")
@@ -104,6 +153,15 @@ async def worker():
                 # Fetch Instagram caption if available
                 caption = ""
                 if "instagram.com" in url:
+                    # Check if cancelled before fetching caption
+                    if check_cancelled(task_id):
+                        logger.info(f"Task {task_id} cancelled before caption fetch")
+                        try:
+                            await status_msg.edit_text("❌ Download cancelled.")
+                        except:
+                            pass
+                        continue
+
                     try:
                         await status_msg.edit_text(f"📝 Fetching caption...")
                     except:
@@ -121,11 +179,29 @@ async def worker():
                     file_path = files[0]
                     if is_audio_file(file_path):
                         # Handle audio files (MP3, M4A, etc.)
+                        # Check if cancelled before processing
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled before audio processing")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            continue
+
                         try:
                             await status_msg.edit_text(f"⚡ Processing audio ...")
                         except:
                             pass
                         
+                        # Check if cancelled before uploading
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled before audio upload")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            continue
+
                         try:
                             await status_msg.edit_text(f"🚀 Uploading audio ...")
                         except:
@@ -164,11 +240,31 @@ async def worker():
                             await status_msg.edit_text(f"⚡ Processing ...")
                         except:
                             pass
+                        
+                        # Check if cancelled before compression
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled before video compression")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            continue
+
                         file_path = compress_video(file_path)
                         # Update files list if compression created a new file
                         if file_path != original_file_path and len(files) == 1:
                             files = [file_path]
                         width, height, duration = get_video_metadata(file_path)
+
+                        # Check if cancelled before upload
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled before video upload")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            continue
+
                         try:
                             await status_msg.edit_text(f"🚀 Uploading ...")
                         except:
@@ -205,6 +301,15 @@ async def worker():
                             uploaded_chat_id = sent_msg.chat_id
                             uploaded_message_ids = [sent_msg.message_id]
                     else:
+                        # Check if cancelled before uploading photo
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled before photo upload")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            continue
+
                         if message:
                             sent_msg = await message.reply_photo(
                                 photo=open(file_path, "rb"),
@@ -227,6 +332,15 @@ async def worker():
                     # Track updated file paths for caching
                     updated_files = []
                     for i, f in enumerate(files[:10]):
+                        # Check if cancelled during media group processing
+                        if check_cancelled(task_id):
+                            logger.info(f"Task {task_id} cancelled during media group processing")
+                            try:
+                                await status_msg.edit_text("❌ Download cancelled.")
+                            except:
+                                pass
+                            break
+
                         if is_audio_file(f):
                             # Note: Telegram doesn't support audio in media groups
                             # Send audio files separately
@@ -253,23 +367,25 @@ async def worker():
                                 media_group.append(InputMediaPhoto(open(f, "rb")))
                     files = updated_files
 
-                    if message:
-                        sent_msgs = await message.reply_media_group(
-                            media=media_group,
-                            reply_to_message_id=original_reply_to_message_id,
-                        )
-                        if sent_msgs:
-                            uploaded_chat_id = sent_msgs[0].chat_id
-                            uploaded_message_ids = [m.message_id for m in sent_msgs]
-                    elif chat_id:
-                        sent_msgs = await context.bot.send_media_group(
-                            chat_id=chat_id,
-                            media=media_group,
-                            reply_to_message_id=original_reply_to_message_id,
-                        )
-                        if sent_msgs:
-                            uploaded_chat_id = sent_msgs[0].chat_id
-                            uploaded_message_ids = [m.message_id for m in sent_msgs]
+                    # Check if cancelled before sending media group
+                    if not check_cancelled(task_id):
+                        if message:
+                            sent_msgs = await message.reply_media_group(
+                                media=media_group,
+                                reply_to_message_id=original_reply_to_message_id,
+                            )
+                            if sent_msgs:
+                                uploaded_chat_id = sent_msgs[0].chat_id
+                                uploaded_message_ids = [m.message_id for m in sent_msgs]
+                        elif chat_id:
+                            sent_msgs = await context.bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media_group,
+                                reply_to_message_id=original_reply_to_message_id,
+                            )
+                            if sent_msgs:
+                                uploaded_chat_id = sent_msgs[0].chat_id
+                                uploaded_message_ids = [m.message_id for m in sent_msgs]
 
                 # No caching: skip updating any cache metadata
 
@@ -289,5 +405,9 @@ async def worker():
                 pass
 
         finally:
+            # Clean up task from active_tasks
+            if task_id:
+                cleanup_task(task_id)
+            
             await asyncio.sleep(30)
             queue.task_done()

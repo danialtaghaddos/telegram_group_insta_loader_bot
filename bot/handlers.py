@@ -4,7 +4,7 @@ from typing import Any, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes
 from .utils import extract_social_urls
-from .config import queue, logger
+from .config import queue, logger, active_tasks, get_next_task_id
 
 
 def is_youtube_url(url: str) -> bool:
@@ -43,13 +43,30 @@ async def handle_message(urls: list[Any], update: Update, context: ContextTypes.
             # Non-YouTube URLs proceed directly
             status_text = f"🤖 I'm on it boss..." if len(urls) == 1 else f"🔜 Items ahead:{len(urls)} — Will get to work soon..."
             
+            # Create cancel button keyboard
+            task_id = get_next_task_id()
+            cancel_keyboard = [
+                [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{task_id}")]
+            ]
+            cancel_markup = InlineKeyboardMarkup(cancel_keyboard)
+            
             status_msg = await update.message.reply_text(
                 status_text,
-                reply_to_message_id=reply_id
+                reply_to_message_id=reply_id,
+                reply_markup=cancel_markup
             )
             
+            # Track this active task for cancellation
+            active_tasks[task_id] = {
+                "cancelled": False,
+                "temp_dir": None,
+                "status_msg": status_msg,
+                "chat_id": update.effective_chat.id if update.effective_chat else None,
+                "url": url
+            }
+            
             # Store the original reply_to_message_id to be used later
-            await queue.put((update, context, url, status_msg, reply_to_message_id, update.message))
+            await queue.put((update, context, url, status_msg, reply_to_message_id, update.message, task_id))
 
 
 async def handle_youtube_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,17 +117,34 @@ async def handle_youtube_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     
     if action == "audio":
-        # User wants audio - delete the question and show processing message
+        # User wants audio - delete the question and show processing message with cancel button
         try:
             await query.message.delete()
         except:
             pass
         
+        # Create task ID and cancel button for the download
+        task_id = get_next_task_id()
+        cancel_keyboard = [
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{task_id}")]
+        ]
+        cancel_markup = InlineKeyboardMarkup(cancel_keyboard)
+        
         status_msg = await context.bot.send_message(
             chat_id=chat_id,
             text="🎵 Downloading audio...",
-            reply_to_message_id=original_reply_to_message_id
+            reply_to_message_id=original_reply_to_message_id,
+            reply_markup=cancel_markup
         )
+        
+        # Track this active task for cancellation
+        active_tasks[task_id] = {
+            "cancelled": False,
+            "temp_dir": None,
+            "status_msg": status_msg,
+            "chat_id": chat_id,
+            "url": url
+        }
         
         # Get the original message that triggered this (the one with the YouTube link)
         try:
@@ -122,8 +156,61 @@ async def handle_youtube_callback(update: Update, context: ContextTypes.DEFAULT_
             original_message = None
         
         # Add to queue for processing - pass original_message as the message to reply with
-        await queue.put((update, context, url, status_msg, original_reply_to_message_id, original_message))
+        await queue.put((update, context, url, status_msg, original_reply_to_message_id, original_message, task_id))
         
         # Clean up the stored URL info
         if url_index in yt_urls:
             del yt_urls[url_index]
+
+
+async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle cancel button callback for active downloads"""
+    query = update.callback_query
+    await query.answer("Cancelling...")
+    
+    data = query.data
+    # Parse task_id from callback data "cancel_{task_id}"
+    parts = data.split("_", 1)
+    if len(parts) < 2:
+        return
+    
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        return
+    
+    # Check if task exists
+    if task_id not in active_tasks:
+        try:
+            await query.message.delete()
+        except:
+            pass
+        return
+    
+    task_info = active_tasks[task_id]
+    
+    # Mark as cancelled
+    task_info["cancelled"] = True
+    
+    # Clean up temp directory if it exists
+    if task_info.get("temp_dir"):
+        try:
+            import shutil
+            shutil.rmtree(task_info["temp_dir"], ignore_errors=True)
+            logger.info(f"Cleaned up temp directory {task_info['temp_dir']} for cancelled task {task_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp directory for task {task_id}: {e}")
+    
+    # Update status message
+    try:
+        await query.message.edit_text("❌ Download cancelled.")
+    except Exception as e:
+        logger.warning(f"Failed to edit status message for cancellation: {e}")
+        try:
+            await query.message.delete()
+        except:
+            pass
+    
+    # Remove from active tasks after a short delay to allow the worker to see the cancellation
+    # The worker will remove it from active_tasks when it processes the cancellation
+    logger.info(f"Task {task_id} marked as cancelled")

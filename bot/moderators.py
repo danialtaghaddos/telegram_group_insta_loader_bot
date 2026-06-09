@@ -4,7 +4,6 @@ Moderator management system for the Telegram bot.
 Handles moderator permissions, access requests, and related commands.
 """
 
-import json
 import os
 import re
 from typing import Optional
@@ -13,82 +12,68 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from .config import logger
+from .storage import (
+    load_moderators_from_storage,
+    save_moderators_to_storage,
+    load_access_requests_from_storage,
+    save_access_requests_to_storage,
+)
 from .utils import extract_social_urls
 
-
-# File paths for data persistence
-MODERATORS_FILE = "/data/moderators.json"
-ACCESS_REQUESTS_FILE = "/data/access_requests.json"
-SETTINGS_FILE = "/data/settings.json"
 
 # In-memory storage
 moderators: dict[int, set[int]] = {}  # {moderator_user_id: {chat_id, ...}}
 access_requests: list[dict] = []  # [{user_id, username, first_name, last_name, status}, ...]
-settings: dict = {"access_requests_enabled": True}
 
 
 def load_moderators() -> dict[int, set[int]]:
-    """Load moderators from file."""
-    if not os.path.exists(MODERATORS_FILE):
-        return {}
+    """Load moderators from Google Drive storage."""
     try:
-        with open(MODERATORS_FILE, "r") as f:
-            data = json.load(f)
-            # Convert to {user_id: set(chat_ids)}
-            return {int(uid): set(chats) for uid, chats in data.items()}
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Failed to load moderators: {e}")
-        return {}
+        data = load_moderators_from_storage()
+        if data:
+            logger.info("Loaded moderators from Google Drive storage")
+            return {uid: set(chats) for uid, chats in data.items()}
+    except Exception as e:
+        logger.warning(f"Failed to load moderators from Google Drive: {e}")
+    
+    logger.info("No moderators found in Google Drive storage")
+    return {}
 
 
 def save_moderators() -> None:
-    """Save moderators to file."""
-    # Convert sets to lists for JSON serialization
-    data = {str(uid): list(chats) for uid, chats in moderators.items()}
-    with open(MODERATORS_FILE, "w") as f:
-        json.dump(data, f)
+    """Save moderators to Google Drive storage."""
+    try:
+        save_moderators_to_storage(moderators)
+        logger.debug("Saved moderators to Google Drive storage")
+    except Exception as e:
+        logger.error(f"Failed to save moderators to Google Drive: {e}")
 
 
 def load_access_requests() -> list[dict]:
-    """Load access requests from file."""
-    if not os.path.exists(ACCESS_REQUESTS_FILE):
-        return []
+    """Load access requests from Google Drive storage."""
     try:
-        with open(ACCESS_REQUESTS_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Failed to load access requests: {e}")
-        return []
+        data = load_access_requests_from_storage()
+        if data:
+            logger.info("Loaded access requests from Google Drive storage")
+            return data
+    except Exception as e:
+        logger.warning(f"Failed to load access requests from Google Drive: {e}")
+    
+    logger.info("No access requests found in Google Drive storage")
+    return []
 
 
 def save_access_requests() -> None:
-    """Save access requests to file."""
-    with open(ACCESS_REQUESTS_FILE, "w") as f:
-        json.dump(access_requests, f)
-
-
-def load_settings() -> dict:
-    """Load settings from file."""
-    if not os.path.exists(SETTINGS_FILE):
-        return {"access_requests_enabled": True}
+    """Save access requests to Google Drive storage."""
     try:
-        with open(SETTINGS_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Failed to load settings: {e}")
-        return {"access_requests_enabled": True}
-
-
-def save_settings() -> None:
-    """Save settings to file."""
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f)
-
+        save_access_requests_to_storage(access_requests)
+        logger.debug("Saved access requests to Google Drive storage")
+    except Exception as e:
+        logger.error(f"Failed to save access requests to Google Drive: {e}")
 
 # Initialize storage from files
 moderators = load_moderators()
 access_requests = load_access_requests()
-settings = load_settings()
 
 
 def is_admin(update: Update) -> bool:
@@ -175,12 +160,6 @@ def deny_request(user_id: int) -> bool:
 async def access_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /access command - users request moderator access."""
     if not update.effective_user:
-        return
-    
-    if not settings.get("access_requests_enabled", True):
-        await update.message.reply_text(
-            "❗ Contact the admin for moderator access."
-        )
         return
     
     user_id = update.effective_user.id
@@ -355,48 +334,12 @@ async def deny_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ No pending request found for user {user_id}."
         )
 
-
-async def access_enabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /access_enabled command - admin enables access requests."""
-    if not is_admin(update):
-        return
+async def _resolve_user_id(context: ContextTypes.DEFAULT_TYPE, user_arg: str) -> tuple[Optional[int], Optional[str]]:
+    """Resolve a username or user ID string to a numeric user ID.
     
-    settings["access_requests_enabled"] = True
-    save_settings()
-    
-    await update.message.reply_text(
-        "✅ Access requests are now **enabled**. Users can use /access to request moderator access.",
-        parse_mode="Markdown"
-    )
-
-
-async def access_disabled_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /access_disabled command - admin disables access requests."""
-    if not is_admin(update):
-        return
-    
-    settings["access_requests_enabled"] = False
-    save_settings()
-    
-    await update.message.reply_text(
-        "⛔ Access requests are now **disabled**. Users cannot request moderator access.",
-        parse_mode="Markdown"
-    )
-
-
-async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /addmod command - admin adds moderator manually by username or user ID."""
-    if not is_admin(update):
-        return
-    
-    if not context.args or len(context.args) < 1:
-        await update.message.reply_text(
-            "❌ Please provide a username or user ID.\n"
-            "Usage: /addmod @username OR /addmod <user_id>"
-        )
-        return
-    
-    user_arg = context.args[0]
+    Returns:
+        Tuple of (user_id, username) or (None, None) if resolution fails.
+    """
     user_id = None
     username = None
     
@@ -426,29 +369,36 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
                 else:
                     raise Exception("Not found via Telethon")
             except Exception as telethon_error:
-                logger.error(f"Failed to resolve username @{username} via Telethon: {telethon_error}")
-                await update.message.reply_text(
-                    f"❌ Could not find user @{escape_markdown(username)}. This usually means:\n"
-                    f"1. The username is incorrect\n"
-                    f"2. The user account doesn't exist\n\n"
-                    f"**Note:** Configure TELEGRAM_API_ID and TELEGRAM_API_HASH to resolve usernames without bot interaction.\n"
-                    f"Or use /addmod <user_id> if you know their numeric Telegram ID."
-                )
-                return
+                logger.error(f"Failed to resolve username @{username}: {telethon_error}")
+                return None, username
     
-    # Now we should have a user_id
+    return user_id, username
+
+
+async def _add_single_moderator(context: ContextTypes.DEFAULT_TYPE, user_arg: str) -> tuple[bool, str]:
+    """Add a single moderator by username or user ID.
+    
+    Returns:
+        Tuple of (success, message) where message describes the result.
+    """
+    user_arg = user_arg.strip()
+    if not user_arg:
+        return False, "Empty argument"
+    
+    user_id, username = await _resolve_user_id(context, user_arg)
+    
     if user_id is None:
-        await update.message.reply_text("❌ Could not determine user ID.")
-        return
+        display = f"@{escape_markdown(username)}" if username else user_arg
+        return False, f"❌ Could not find user `{escape_markdown(user_arg)}`"
+    
+    # Check if already a moderator
+    if user_id in moderators:
+        display_name = f"@{escape_markdown(username)}" if username else f"User ID `{user_id}`"
+        return False, f"⚠️ {display_name} (ID: `{user_id}`) is already a moderator"
     
     # Add as moderator
-    display_name = f"@{escape_markdown(username)}" if username else f"User ID `{user_id}`"
     add_moderator(user_id)
-    await update.message.reply_text(
-        f"✅ {display_name} (ID: `{user_id}`) has been added as a moderator.\n\n"
-        f"They can now activate the bot in any chat they are a member of.",
-        parse_mode="Markdown"
-    )
+    display_name = f"@{escape_markdown(username)}" if username else f"User ID `{user_id}`"
     
     # Notify the new moderator
     try:
@@ -468,6 +418,77 @@ async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TY
         )
     except Exception as e:
         logger.error(f"Failed to notify new moderator: {e}")
+    
+    return True, f"✅ {display_name} (ID: `{user_id}`) has been added as a moderator."
+
+
+async def add_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /addMods command - admin adds moderator(s) by username or user ID.
+    
+    Supports adding multiple moderators at once using comma-separated values.
+    Examples:
+        /addMods @username
+        /addMods 123456789
+        /addMods @user1,@user2,123456789
+        /addMods @user1 123456789 @user2
+    """
+    if not is_admin(update):
+        return
+    
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "❌ Please provide a username or user ID.\n"
+            "Usage: /addMods @username OR /addMods <user_id>\n"
+            "You can also add multiple moderators at once:\n"
+            "/addMods @user1,@user2,123456789"
+        )
+        return
+    
+    # Parse all arguments and split by comma for each argument
+    all_user_args = []
+    for arg in context.args:
+        # Split each argument by comma to support comma-separated lists
+        parts = [p.strip() for p in arg.split(',') if p.strip()]
+        all_user_args.extend(parts)
+    
+    if not all_user_args:
+        await update.message.reply_text(
+            "❌ No valid usernames or user IDs provided.\n"
+            "Usage: /addMods @username OR /addMods <user_id>\n"
+            "You can also add multiple moderators at once:\n"
+            "/addMods @user1,@user2,123456789"
+        )
+        return
+    
+    # If only one moderator, use the simple single-message format
+    if len(all_user_args) == 1:
+        success, message = await _add_single_moderator(context, all_user_args[0])
+        await update.message.reply_text(
+            message + "\n\nThey can now activate the bot in any chat they are a member of." if success else message,
+            parse_mode="Markdown"
+        )
+        return
+    
+    # For multiple moderators, process all and provide a summary
+    results = []
+    for user_arg in all_user_args:
+        success, message = await _add_single_moderator(context, user_arg)
+        results.append((success, message))
+    
+    # Build summary message
+    successful = [msg for success, msg in results if success]
+    failed = [msg for success, msg in results if not success]
+    
+    summary_lines = []
+    if successful:
+        summary_lines.append(f"✅ **Successfully added {len(successful)} moderator(s):**")
+        summary_lines.extend(successful)
+    if failed:
+        summary_lines.append(f"\n❌ **Failed to add {len(failed)} user(s):**")
+        summary_lines.extend(failed)
+    
+    summary_text = "\n".join(summary_lines)
+    await update.message.reply_text(summary_text, parse_mode="Markdown")
 
 
 async def remove_moderator_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -578,7 +599,7 @@ async def list_requests_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def list_moderators_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /listmods command - admin views all moderators."""
+    """Handle /listMods command - admin views all moderators."""
     if not is_admin(update):
         return
     
@@ -671,16 +692,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "/deactivate - Deactivate bot for current chat\n"
         text += "/doorman - Toggle doorman mode to auto-delete join and leave messages\n"
         text += "/listChats - List all activated chats\n"
-        text += "/activation_requests - View pending bot activation requests\n"
-        text += "/approve_activation chat_id - Approve bot activation for a chat\n"
-        text += "/deny_activation chat_id - Deny bot activation for a chat\n"
-        text += "/listmods - List all moderators with profile links\n"
+        text += "/listMods - List all moderators with profile links\n"
         text += "/approve user_id - Approve moderator access request\n"
         text += "/deny user_id - Deny moderator access request\n"
         text += "/requests - View pending moderator access requests\n"
-        text += "/access_enabled - Enable access requests\n"
-        text += "/access_disabled - Disable access requests\n"
-        text += "/addmod @username - Add moderator\n"
+        text += "/addMods @username - Add moderator (supports multiple: @u1,@u2,123)\n"
         text += "/removemod @username - Remove moderator\n"
         text += "/load - Reply to a message with links to download content, works in any chat\n\n"
     elif is_mod:

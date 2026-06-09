@@ -12,22 +12,19 @@ from telegram.ext import (
 
 from .utils import extract_social_urls
 from .activation import (
+    ACTIVATED_CHATS,
     activate,
     deactivate,
     list_chats,
     doorman,
     doorman_message_handler,
     is_activated,
-    approve_activation,
-    deny_activation,
-    list_activation_requests
+    load_activation_state,
 )
 from .moderators import (
     access_command,
     approve_command,
     deny_command,
-    access_enabled_command,
-    access_disabled_command,
     add_moderator_command,
     remove_moderator_command,
     list_requests_command,
@@ -37,12 +34,13 @@ from .moderators import (
     load_command,
     is_moderator,
 )
-from .config import BOT_TOKEN
-from .handlers import handle_message, handle_youtube_callback
+from .config import BOT_TOKEN, logger
+from .handlers import handle_message, handle_youtube_callback, handle_cancel_callback
 from .worker import worker
 
 async def on_startup(app):
-    for _ in range(3):
+    load_activation_state()
+    for _ in range(1):
         asyncio.create_task(worker())
 
 
@@ -56,14 +54,17 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not urls:
         return
     
-    # Check if chat is activated or if user is a moderator in private chat
     if not is_activated(chat_id):
-        # Allow moderators to use the bot in their private chats
-        if update.effective_user and chat_id == update.effective_user.id and is_moderator(update.effective_user.id):
+        if update.effective_chat and update.effective_chat.type == "private" and update.effective_user and is_moderator(update.effective_user.id):
             pass  # Allow moderator in private chat
         else:
             return
     
+    logger.info("Received message in chat %s: %s - activated: %s - effective chat: %s",
+                 chat_id,
+                   update.message.text,
+                     is_activated(chat_id),
+                       update.effective_user.id if update.effective_chat else None)
     await handle_message(urls, update, context)
 
 
@@ -75,11 +76,6 @@ def main():
     app.add_handler(CommandHandler("deactivate", deactivate))
     app.add_handler(CommandHandler("doorman", doorman))
 
-    # Activation request management (admin)
-    app.add_handler(CommandHandler("approve_activation", approve_activation))
-    app.add_handler(CommandHandler("deny_activation", deny_activation))
-    app.add_handler(CommandHandler("activation_requests", list_activation_requests))
-
     # Admin-only commands
     app.add_handler(CommandHandler("listChats", list_chats))
 
@@ -87,14 +83,12 @@ def main():
     app.add_handler(CommandHandler("access", access_command))
     app.add_handler(CommandHandler("approve", approve_command))
     app.add_handler(CommandHandler("deny", deny_command))
-    app.add_handler(CommandHandler("access_enabled", access_enabled_command))
-    app.add_handler(CommandHandler("access_disabled", access_disabled_command))
 
     # Moderator management commands (admin)
-    app.add_handler(CommandHandler("addmod", add_moderator_command))
+    app.add_handler(CommandHandler("addMods", add_moderator_command))
     app.add_handler(CommandHandler("removemod", remove_moderator_command))
     app.add_handler(CommandHandler("requests", list_requests_command))
-    app.add_handler(CommandHandler("listmods", list_moderators_command))
+    app.add_handler(CommandHandler("listMods", list_moderators_command))
 
     # Moderator info commands
     app.add_handler(CommandHandler("myChats", my_chats_command))
@@ -107,6 +101,9 @@ def main():
 
     # YouTube callback handler (must be before message handlers to catch callbacks)
     app.add_handler(CallbackQueryHandler(handle_youtube_callback, pattern=r"^yt_(audio|cancel)_\d+$"))
+
+    # Cancel callback handler for active downloads
+    app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel_\d+$"))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

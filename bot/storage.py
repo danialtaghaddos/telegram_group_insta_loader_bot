@@ -1,500 +1,380 @@
 """
-JSONBin.io storage module for persistent data storage.
+Google Drive storage module for persistent data storage.
 
-This module provides a cloud-based storage solution using JSONBin.io API,
-with automatic bin management. Only the API key is required - all bin IDs
-are stored in a master metadata bin on JSONBin.io.
+This module uses Google Drive API when configured, and falls back to a local JSON file
+store when the cloud API is unavailable.
 """
+
 import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, Optional
 
 import requests
 
 from .config import logger
 
-# JSONBin.io API configuration
-JSONBIN_API_BASE = "https://api.jsonbin.io/v3"
-JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY")
+# Google Drive configuration
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 
-# Local fallback paths (used when JSONBin.io is not configured or fails)
-LOCAL_DATA_DIR = os.getenv("LOCAL_DATA_DIR", "/data")
-LOCAL_ACTIVATED_CHATS = os.path.join(LOCAL_DATA_DIR, "activated_chats.json")
-LOCAL_DOORMAN_CHATS = os.path.join(LOCAL_DATA_DIR, "doorman_chats.json")
-LOCAL_ACTIVATION_REQUESTS = os.path.join(LOCAL_DATA_DIR, "activation_requests.json")
+LOCAL_STORAGE_ROOT = Path(
+    os.getenv("BOT_STORAGE_DIR")
+    or ("/data" if Path("/data").exists() else Path(__file__).resolve().parent.parent / "data")
+)
 
-# Master metadata bin name (stores all bin IDs)
-MASTER_BIN_NAME = "telegram_bot_storage_metadata"
-MASTER_BIN_ENV = os.getenv("JSONBIN_MASTER_BIN_ID")
-
-
-class MasterBinManager:
-    """
-    Manages the master metadata bin that stores all other bin IDs.
-    This allows the system to work without storing bin IDs in environment variables.
-    """
-    
-    def __init__(self):
-        self.bin_id = MASTER_BIN_ENV
-        self._cache = None
-        self._lock = threading.Lock()
-    
-    def _get_headers(self) -> dict:
-        return {
-            "Content-Type": "application/json",
-            "X-Master-Key": JSONBIN_API_KEY
-        }
-    
-    def get_bin_ids(self) -> dict:
-        """Get all bin IDs from the master metadata bin."""
-        with self._lock:
-            if self._cache is not None:
-                return self._cache
-            
-            if not JSONBIN_API_KEY:
-                return {}
-            
-            # Try to read existing master bin
-            if self.bin_id:
-                try:
-                    url = f"{JSONBIN_API_BASE}/b/{self.bin_id}/latest"
-                    headers = self._get_headers()
-                    headers["X-Bin-Meta"] = "false"
-                    response = requests.get(url, headers=headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        self._cache = response.json()
-                        return self._cache
-                except Exception as e:
-                    logger.warning(f"Error reading master bin: {e}")
-            
-            # If no bin_id or read failed, try to find by listing bins (not supported by JSONBin)
-            # So we'll just return empty dict - bins will be created as needed
-            self._cache = {}
-            return self._cache
-    
-    def save_bin_id(self, bin_name: str, bin_id: str) -> bool:
-        """Save a bin ID to the master metadata bin."""
-        with self._lock:
-            if not JSONBIN_API_KEY:
-                return False
-            
-            # Get current data
-            data = self.get_bin_ids()
-            data[bin_name] = bin_id
-            
-            # If we don't have a master bin yet, create one
-            if not self.bin_id:
-                return self._create_master_bin(data)
-            
-            # Update existing master bin
-            try:
-                url = f"{JSONBIN_API_BASE}/b/{self.bin_id}"
-                response = requests.put(url, json=data, headers=self._get_headers(), timeout=10)
-                
-                if response.status_code == 200:
-                    self._cache = data
-                    logger.debug(f"Updated master bin with {bin_name} = {bin_id}")
-                    return True
-                else:
-                    logger.error(f"Failed to update master bin: {response.status_code}")
-                    return False
-            except Exception as e:
-                logger.error(f"Error updating master bin: {e}")
-                return False
-    
-    def _create_master_bin(self, data: dict) -> bool:
-        """Create the master metadata bin."""
-        try:
-            url = f"{JSONBIN_API_BASE}/b"
-            headers = self._get_headers()
-            headers["X-Bin-Name"] = MASTER_BIN_NAME
-            
-            response = requests.post(url, json=data, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                result = response.json()
-                self.bin_id = result.get("metadata", {}).get("id")
-                self._cache = data
-                
-                logger.info(f"✅ Created master metadata bin with ID: {self.bin_id}")
-                logger.info(f"📝 Add to your .env.local: JSONBIN_MASTER_BIN_ID={self.bin_id}")
-                return True
-            else:
-                logger.error(f"Failed to create master bin: {response.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Error creating master bin: {e}")
-            return False
-    
-    def clear_cache(self):
-        with self._lock:
-            self._cache = None
+# Try to import Google Drive dependencies
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_DRIVE_AVAILABLE = True
+except ImportError:
+    GOOGLE_DRIVE_AVAILABLE = False
+    logger.warning("Google Drive dependencies not installed. Falling back to local storage.")
 
 
-# Global master bin manager
-_master_bin_manager = None
-
-
-def _get_master_bin_manager() -> MasterBinManager:
-    global _master_bin_manager
-    if _master_bin_manager is None:
-        _master_bin_manager = MasterBinManager()
-    return _master_bin_manager
-
-
-class JSONBinStorage:
-    """
-    A storage class that uses JSONBin.io for cloud storage with auto-creation.
-    Bin IDs are stored in a master metadata bin, so no environment variables
-    are needed except the API key.
-    
-    Features:
-    - Automatic bin creation on JSONBin.io if bin doesn't exist
-    - Bin IDs stored in master metadata bin (no env vars needed)
-    - In-memory caching to reduce API calls
-    - Local file fallback when API is unavailable
-    - Thread-safe operations
-    """
-    
-    def __init__(self, bin_name: str, local_path: str, default_value: Any):
-        """
-        Initialize a JSONBin storage instance.
-        
-        Args:
-            bin_name: Friendly name for the bin (used as unique identifier)
-            local_path: Path to local fallback file
-            default_value: Default value if no data exists
-        """
-        self.bin_name = bin_name
-        self.bin_id = None
-        self.local_path = local_path
-        self.default_value = default_value
-        self._cache = None
-        self._lock = threading.Lock()
-        self._use_local_only = not JSONBIN_API_KEY
-        self._bin_created = False
-        self._creation_attempted = False
-        
-        # Ensure local directory exists
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    
-    def _get_headers(self) -> dict:
-        """Get headers for JSONBin.io API requests."""
-        return {
-            "Content-Type": "application/json",
-            "X-Master-Key": JSONBIN_API_KEY
-        }
-    
-    def _read_local(self) -> Any:
-        """Read data from local fallback file."""
-        try:
-            if os.path.exists(self.local_path):
-                with open(self.local_path, "r") as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.debug(f"Failed to read local file {self.local_path}: {e}")
+def _get_drive_service() -> Optional[Any]:
+    """Create and return a Google Drive API service client."""
+    if not GOOGLE_DRIVE_AVAILABLE:
         return None
     
-    def _write_local(self, data: Any) -> None:
-        """Write data to local fallback file."""
-        try:
-            os.makedirs(os.path.dirname(self.local_path), exist_ok=True)
-            with open(self.local_path, "w") as f:
-                json.dump(data, f)
-        except Exception as e:
-            logger.error(f"Failed to write local file {self.local_path}: {e}")
+    if not GOOGLE_DRIVE_FOLDER_ID or not GOOGLE_SERVICE_ACCOUNT_FILE:
+        return None
     
-    def _ensure_bin_exists(self) -> bool:
-        """
-        Ensure the bin exists on JSONBin.io.
-        First checks the master metadata bin for the bin ID.
-        If not found, creates a new bin and registers it.
-        
-        Returns:
-            True if bin exists or was created successfully
-        """
-        if self._use_local_only:
-            return False
-            
-        if self.bin_id and self._bin_created:
-            return True
-        
-        # Check master bin for existing bin ID
-        if not self.bin_id and not self._creation_attempted:
-            master = _get_master_bin_manager()
-            bin_ids = master.get_bin_ids()
-            if self.bin_name in bin_ids:
-                self.bin_id = bin_ids[self.bin_name]
-                self._bin_created = True
-                logger.debug(f"Found bin '{self.bin_name}' with ID: {self.bin_id}")
-                return True
-        
-        # Try to create new bin
-        if not self.bin_id:
-            return self._create_bin()
-        
-        return True
+    # Resolve the service account file path (relative to project root)
+    project_root = Path(__file__).resolve().parent.parent
+    service_account_path = project_root / GOOGLE_SERVICE_ACCOUNT_FILE
     
-    def _create_bin(self) -> bool:
-        """
-        Create a new bin on JSONBin.io with the default data.
-        Registers the new bin ID in the master metadata bin.
-        
-        Returns:
-            True if creation was successful
-        """
-        if self._creation_attempted:
-            return self.bin_id is not None
-            
-        self._creation_attempted = True
-        
-        try:
-            url = f"{JSONBIN_API_BASE}/b"
-            headers = self._get_headers()
-            headers["X-Bin-Name"] = self.bin_name
-            
-            response = requests.post(
-                url,
-                json=self.default_value,
-                headers=headers,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                self.bin_id = result.get("metadata", {}).get("id")
-                self._bin_created = True
-                
-                # Register in master bin
-                master = _get_master_bin_manager()
-                if master.save_bin_id(self.bin_name, self.bin_id):
-                    logger.info(f"✅ Created JSONBin '{self.bin_name}' with ID: {self.bin_id}")
-                else:
-                    logger.warning(f"Created bin but failed to register in master bin")
-                
-                return True
-            else:
-                logger.error(f"Failed to create bin '{self.bin_name}': {response.status_code} - {response.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Error creating bin '{self.bin_name}': {e}")
-            return False
+    if not service_account_path.exists():
+        logger.warning(f"Service account file not found: {service_account_path}")
+        return None
     
-    def read(self, use_cache: bool = True) -> Any:
-        """
-        Read data from storage.
-        
-        Args:
-            use_cache: Whether to use cached data if available
-            
-        Returns:
-            The stored data or default value
-        """
-        with self._lock:
-            # Return cached data if available and allowed
-            if use_cache and self._cache is not None:
-                return self._cache
-            
-            # Try JSONBin.io first if configured
-            if not self._use_local_only:
-                # Ensure bin exists (create if needed)
-                if self._ensure_bin_exists() and self.bin_id:
-                    try:
-                        url = f"{JSONBIN_API_BASE}/b/{self.bin_id}/latest"
-                        headers = self._get_headers()
-                        headers["X-Bin-Meta"] = "false"  # Get just the data, no metadata
-                        
-                        response = requests.get(url, headers=headers, timeout=10)
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            self._cache = result
-                            return result
-                        elif response.status_code == 404:
-                            logger.warning(f"Bin '{self.bin_name}' not found, falling back to local")
-                            self.bin_id = None
-                            self._bin_created = False
-                    except Exception as e:
-                        logger.warning(f"JSONBin.io read error for '{self.bin_name}', falling back to local: {e}")
-            
-            # Fall back to local storage
-            local_data = self._read_local()
-            if local_data is not None:
-                self._cache = local_data
-                return local_data
-            
-            # Return default value
-            self._cache = self.default_value
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            str(service_account_path),
+            scopes=['https://www.googleapis.com/auth/drive']
+        )
+        service = build('drive', 'v3', credentials=credentials)
+        return service
+    except Exception as exc:
+        logger.error(f"Failed to create Google Drive service: {exc}")
+        return None
+
+
+class GoogleDriveStorage:
+    """Storage backend using Google Drive API with local file fallback."""
+    
+    def __init__(self, file_name: str, default_value: Any):
+        self.file_name = file_name
+        self.default_value = default_value
+        self._lock = threading.Lock()
+        self._local_cache: Any = None
+        self._cache_loaded = False
+        self._drive_service: Optional[Any] = None
+        self._file_id: Optional[str] = None
+        self._initialized = False
+    
+    def _local_path(self) -> Path:
+        return LOCAL_STORAGE_ROOT / f"{self.file_name}.json"
+    
+    def _read_local(self) -> Any:
+        path = self._local_path()
+        if not path.exists():
             return self.default_value
+        
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(f"Local storage read failed for '{self.file_name}': {exc}")
+            return self.default_value
+        
+        return data
+    
+    def _write_local(self, data: Any) -> bool:
+        try:
+            self._local_path().parent.mkdir(parents=True, exist_ok=True)
+            with self._local_path().open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=True, indent=2)
+            return True
+        except OSError as exc:
+            logger.warning(f"Local storage write failed for '{self.file_name}': {exc}")
+            return False
+    
+    def _ensure_initialized(self) -> bool:
+        """Ensure the Drive service is available and file exists."""
+        if self._initialized:
+            return self._file_id is not None
+        
+        with self._lock:
+            if self._initialized:
+                return self._file_id is not None
+            
+            self._drive_service = _get_drive_service()
+            if not self._drive_service or not GOOGLE_DRIVE_FOLDER_ID:
+                self._initialized = True
+                return False
+            
+            try:
+                # Search for existing file in the folder
+                query = f"name='{self.file_name}.json' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false"
+                response = self._drive_service.files().list(
+                    q=query,
+                    spaces='drive',
+                    fields='files(id, name)'
+                ).execute()
+                
+                files = response.get('files', [])
+                if files:
+                    self._file_id = files[0]['id']
+                    logger.info(f"✅ Found Google Drive file '{self.file_name}.json' with ID: {self._file_id}")
+                else:
+                    # Create new file
+                    from googleapiclient.http import MediaIoBaseUpload
+                    
+                    file_metadata = {
+                        'name': f'{self.file_name}.json',
+                        'parents': [GOOGLE_DRIVE_FOLDER_ID]
+                    }
+                    
+                    # Prepare initial content
+                    if self.default_value == []:
+                        content = []
+                    elif self.default_value is None or self.default_value == {}:
+                        content = {}
+                    else:
+                        content = self.default_value
+                    
+                    import io
+                    content_bytes = json.dumps(content, ensure_ascii=True).encode('utf-8')
+                    media_body = io.BytesIO(content_bytes)
+                    upload = MediaIoBaseUpload(media_body, mimetype='application/json')
+                    
+                    file = self._drive_service.files().create(
+                        body=file_metadata,
+                        media_body=upload,
+                        fields='id'
+                    ).execute()
+                    
+                    self._file_id = file.get('id')
+                    logger.info(f"✅ Created Google Drive file '{self.file_name}.json' with ID: {self._file_id}")
+                
+                self._initialized = True
+                return True
+                
+            except Exception as exc:
+                logger.error(f"Failed to initialize Google Drive storage for '{self.file_name}': {exc}")
+                self._initialized = True
+                return False
+    
+    def read(self) -> Any:
+        """Read data from Google Drive with local fallback."""
+        if not self._ensure_initialized():
+            return self._read_local()
+        
+        try:
+            # Download file content
+            request = self._drive_service.files().get_media(fileId=self._file_id)
+            content = request.execute()
+            
+            if isinstance(content, bytes):
+                content = content.decode('utf-8')
+            
+            data = json.loads(content)
+            return data
+            
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                logger.warning(f"Google Drive file '{self.file_name}' not found, recreating")
+                with self._lock:
+                    self._file_id = None
+                    self._initialized = False
+                if self._ensure_initialized():
+                    return self.default_value
+            else:
+                logger.warning(f"Google Drive read failed for '{self.file_name}': {exc}")
+        except Exception as exc:
+            logger.warning(f"Google Drive read error for '{self.file_name}': {exc}")
+        
+        return self._read_local()
     
     def write(self, data: Any) -> bool:
-        """
-        Write data to storage.
+        """Write data to Google Drive with local fallback."""
+        if not self._ensure_initialized():
+            return self._write_local(data)
         
-        Args:
-            data: The data to store
+        try:
+            import io
+            from googleapiclient.http import MediaIoBaseUpload
             
-        Returns:
-            True if write was successful
-        """
-        with self._lock:
-            # Update cache
-            self._cache = data
+            content_bytes = json.dumps(data, ensure_ascii=True).encode('utf-8')
+            media_body = io.BytesIO(content_bytes)
+            upload = MediaIoBaseUpload(media_body, mimetype='application/json')
             
-            # Always write to local fallback
-            self._write_local(data)
-            
-            # Try JSONBin.io if configured
-            if not self._use_local_only:
-                # Ensure bin exists (create if needed)
-                if not self._ensure_bin_exists() or not self.bin_id:
-                    logger.warning(f"Could not ensure bin exists for '{self.bin_name}', using local only")
-                    return True  # Local write succeeded
-                
-                try:
-                    url = f"{JSONBIN_API_BASE}/b/{self.bin_id}"
-                    response = requests.put(
-                        url, 
-                        json=data, 
-                        headers=self._get_headers(),
-                        timeout=10
-                    )
-                    
-                    if response.status_code == 200:
-                        logger.debug(f"Successfully wrote to JSONBin '{self.bin_name}' ({self.bin_id})")
-                        return True
-                    elif response.status_code == 404:
-                        # Bin doesn't exist anymore, try to recreate
-                        logger.warning(f"Bin '{self.bin_name}' not found during write, recreating...")
-                        self.bin_id = None
-                        self._bin_created = False
-                        if self._create_bin():
-                            # Retry write with new bin
-                            return self.write(data)
-                        return False
-                    else:
-                        logger.warning(f"JSONBin write failed for '{self.bin_name}': {response.status_code} - {response.text}")
-                        return False
-                except Exception as e:
-                    logger.warning(f"JSONBin.io write error for '{self.bin_name}', using local only: {e}")
-                    return True  # Local write succeeded
+            # Update file content
+            self._drive_service.files().update(
+                fileId=self._file_id,
+                media_body=upload
+            ).execute()
             
             return True
+            
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                logger.warning(f"Google Drive file '{self.file_name}' not found during write, recreating")
+                with self._lock:
+                    self._file_id = None
+                    self._initialized = False
+                if self._ensure_initialized():
+                    return self.write(data)
+            else:
+                logger.warning(f"Google Drive write failed for '{self.file_name}': {exc}")
+        except Exception as exc:
+            logger.warning(f"Google Drive write error for '{self.file_name}': {exc}")
+        
+        return self._write_local(data)
     
     def clear_cache(self) -> None:
-        """Clear the in-memory cache."""
-        with self._lock:
-            self._cache = None
+        self._cache_loaded = False
+        self._local_cache = None
 
 
-# Create storage instances for each data type
+# Storage instances
 _activated_chats_storage = None
 _doorman_chats_storage = None
-_activation_requests_storage = None
+_moderators_storage = None
+_access_requests_storage = None
 
 
-def _get_activated_chats_storage() -> JSONBinStorage:
-    """Get or create the activated chats storage instance."""
+def _get_activated_chats_storage() -> GoogleDriveStorage:
     global _activated_chats_storage
     if _activated_chats_storage is None:
-        _activated_chats_storage = JSONBinStorage(
-            bin_name="activated_chats",
-            local_path=LOCAL_ACTIVATED_CHATS,
-            default_value=[]
+        _activated_chats_storage = GoogleDriveStorage(
+            file_name="activated_chats",
+            default_value=[],
         )
     return _activated_chats_storage
 
 
-def _get_doorman_chats_storage() -> JSONBinStorage:
-    """Get or create the doorman chats storage instance."""
+def _get_doorman_chats_storage() -> GoogleDriveStorage:
     global _doorman_chats_storage
     if _doorman_chats_storage is None:
-        _doorman_chats_storage = JSONBinStorage(
-            bin_name="doorman_chats",
-            local_path=LOCAL_DOORMAN_CHATS,
-            default_value=[]
+        _doorman_chats_storage = GoogleDriveStorage(
+            file_name="doorman_chats",
+            default_value=[],
         )
     return _doorman_chats_storage
 
 
-def _get_activation_requests_storage() -> JSONBinStorage:
-    """Get or create the activation requests storage instance."""
-    global _activation_requests_storage
-    if _activation_requests_storage is None:
-        _activation_requests_storage = JSONBinStorage(
-            bin_name="activation_requests",
-            local_path=LOCAL_ACTIVATION_REQUESTS,
-            default_value=[]
+def _get_moderators_storage() -> GoogleDriveStorage:
+    global _moderators_storage
+    if _moderators_storage is None:
+        _moderators_storage = GoogleDriveStorage(
+            file_name="moderators",
+            default_value={"moderators": {}},
         )
-    return _activation_requests_storage
+    return _moderators_storage
 
 
-# Public API functions matching the original interface
+def _get_access_requests_storage() -> GoogleDriveStorage:
+    global _access_requests_storage
+    if _access_requests_storage is None:
+        _access_requests_storage = GoogleDriveStorage(
+            file_name="access_requests",
+            default_value=[],
+        )
+    return _access_requests_storage
+
+
 def load_activated_chats() -> set[int]:
-    """Load activated chats from storage."""
     data = _get_activated_chats_storage().read()
     return set(data) if isinstance(data, list) else set()
 
 
 def save_activated_chats(chats: set[int]) -> None:
-    """Save activated chats to storage."""
-    _get_activated_chats_storage().write(list(chats))
+    storage = _get_activated_chats_storage()
+    data = list(chats)
+    success = storage.write(data)
+    logger.debug("Saved activated chats: %s (success: %s)", data, success)
 
 
 def load_doorman_chats() -> set[int]:
-    """Load doorman chats from storage."""
     data = _get_doorman_chats_storage().read()
     return set(data) if isinstance(data, list) else set()
 
 
 def save_doorman_chats(chats: set[int]) -> None:
-    """Save doorman chats to storage."""
-    _get_doorman_chats_storage().write(list(chats))
+    storage = _get_doorman_chats_storage()
+    data = list(chats)
+    success = storage.write(data)
+    logger.debug("Saved doorman chats: %s (success: %s)", data, success)
 
 
-def load_activation_requests() -> list[dict]:
-    """Load activation requests from storage."""
-    data = _get_activation_requests_storage().read()
-    return data if isinstance(data, list) else []
+def load_moderators_from_storage() -> dict[int, list[int]]:
+    """Load moderators from Google Drive storage.
+    
+    The data is stored with a 'moderators' wrapper key to avoid issues with empty objects.
+    """
+    data = _get_moderators_storage().read()
+    # Handle the wrapper object {"moderators": {...}}
+    if isinstance(data, dict):
+        # If data has a "moderators" key, extract it
+        if "moderators" in data:
+            moderators_data = data["moderators"]
+            if isinstance(moderators_data, dict):
+                return {int(k): v for k, v in moderators_data.items()}
+        # Otherwise, if data is already the moderators dict (non-empty), use it directly
+        elif data:
+            return {int(k): v for k, v in data.items()}
+    return {}
 
 
-def save_activation_requests(requests: list[dict]) -> None:
-    """Save activation requests to storage."""
-    _get_activation_requests_storage().write(requests)
+def save_moderators_to_storage(moderators_data: dict[int, set[int]]) -> None:
+    """Save moderators to Google Drive storage.
+    
+    The data is stored with a 'moderators' wrapper key to avoid issues with empty objects.
+    """
+    storage = _get_moderators_storage()
+    # Wrap the data in a "moderators" key
+    data = {"moderators": {str(k): list(v) for k, v in moderators_data.items()}}
+    success = storage.write(data)
+    logger.debug("Saved moderators: %s (success: %s)", data, success)
+
+
+def load_access_requests_from_storage() -> list[dict]:
+    """Load access requests from Google Drive storage."""
+    data = _get_access_requests_storage().read()
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def save_access_requests_to_storage(requests_data: list[dict]) -> None:
+    """Save access requests to Google Drive storage."""
+    storage = _get_access_requests_storage()
+    success = storage.write(requests_data)
+    logger.debug("Saved access requests: %s (success: %s)", requests_data, success)
 
 
 def clear_all_caches() -> None:
-    """Clear all in-memory caches. Useful for testing or forcing a refresh."""
     if _activated_chats_storage:
         _activated_chats_storage.clear_cache()
     if _doorman_chats_storage:
         _doorman_chats_storage.clear_cache()
-    if _activation_requests_storage:
-        _activation_requests_storage.clear_cache()
-    if _master_bin_manager:
-        _master_bin_manager.clear_cache()
+    if _access_requests_storage:
+        _access_requests_storage.clear_cache()
 
 
 def get_storage_info() -> dict:
-    """
-    Get information about all storage bins.
-    Useful for logging or debugging.
-    
-    Returns:
-        Dictionary with bin names and their IDs
-    """
-    info = {
-        "master_bin_id": _get_master_bin_manager().bin_id if _master_bin_manager else None,
-        "bins": {}
+    return {
+        "storage_type": "google_drive" if GOOGLE_DRIVE_FOLDER_ID else "local",
+        "folder_id": GOOGLE_DRIVE_FOLDER_ID,
+        "files": {
+            "activated_chats": _get_activated_chats_storage()._file_id,
+            "doorman_chats": _get_doorman_chats_storage()._file_id,
+            "moderators": _get_moderators_storage()._file_id,
+            "access_requests": _get_access_requests_storage()._file_id,
+        },
     }
-    
-    for name, storage in [
-        ("activated_chats", _get_activated_chats_storage()),
-        ("doorman_chats", _get_doorman_chats_storage()),
-        ("activation_requests", _get_activation_requests_storage()),
-    ]:
-        info["bins"][name] = storage.bin_id
-    
-    return info

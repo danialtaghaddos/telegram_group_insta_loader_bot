@@ -8,19 +8,32 @@ from .storage import (
     save_activated_chats,
     load_doorman_chats,
     save_doorman_chats,
-    load_activation_requests,
-    save_activation_requests,
 )
 
-DEBUG = bool(os.getenv("DEBUG_BOT"))
+DEBUG = os.getenv("DEBUG_BOT", "").lower() in ("true", "1", "yes", "t")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your Telegram numeric user ID
 
 # Import moderator functions
 from .moderators import is_admin as check_is_admin, is_moderator
 
-ACTIVATED_CHATS: set[int] = load_activated_chats()
-DOORMAN_CHATS: set[int] = load_doorman_chats()
-ACTIVATION_REQUESTS: list[dict] = load_activation_requests()
+ACTIVATED_CHATS: set[int] = set()
+DOORMAN_CHATS: set[int] = set()
+
+
+def load_activation_state() -> None:
+    """Load activation-related state after the application has started."""
+    global ACTIVATED_CHATS, DOORMAN_CHATS
+
+    ACTIVATED_CHATS = load_activated_chats()
+    DOORMAN_CHATS = load_doorman_chats()
+
+    logger.info(
+        "Loaded activation state: %s activated chats, %s doorman chats",
+        len(ACTIVATED_CHATS),
+        len(DOORMAN_CHATS),
+    )
+    logger.debug("Activated chats: %s", ACTIVATED_CHATS)
+    logger.debug("Doorman chats: %s", DOORMAN_CHATS)
 
 
 def can_moderate_chat(update: Update) -> bool:
@@ -37,40 +50,13 @@ def can_moderate_chat(update: Update) -> bool:
 
 def is_activated(chat_id: int) -> bool:
     """Check if bot is activated for a chat. In DEBUG mode, all chats are activated."""
+    logger.info(f"Debug Mode env: {os.getenv('DEBUG_BOT')}")
     if DEBUG:
+        logger.info(f"DEBUG mode: treating all chats as activated. Chat ID: {chat_id}")
         return True
-    return chat_id in ACTIVATED_CHATS
-
-
-def has_pending_activation_request(chat_id: int) -> bool:
-    """Check if there's a pending activation request for this chat."""
-    return any(req["chat_id"] == chat_id and req["status"] == "pending" for req in ACTIVATION_REQUESTS)
-
-
-async def notify_admin_of_activation_request(update: Update, context: ContextTypes.DEFAULT_TYPE, 
-                                              chat_id: int, chat_title: str, 
-                                              user_id: int, username: str, 
-                                              first_name: str, last_name: str):
-    """Send notification to admin about activation request."""
-    name = first_name
-    if last_name:
-        name += f" {last_name}"
-    if username:
-        name += f" (@{username})"
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_USER_ID,
-            text=(
-                f"🔔 **Bot Activation Request**\n\n"
-                f"📋 Chat: {escape_markdown(chat_title)} (ID: `{chat_id}`)\n"
-                f"👤 Requested by: {escape_markdown(name)} (ID: `{user_id}`)\n\n"
-                f"Use /approve_activation {chat_id} to approve or /deny_activation {chat_id} to deny."
-            ),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logger.error(f"Failed to notify admin of activation request: {e}")
+    activated = chat_id in ACTIVATED_CHATS
+    logger.info(f"Checking activation for chat {chat_id}: {activated}")
+    return activated
 
 
 def escape_markdown(text: str) -> str:
@@ -84,150 +70,30 @@ def escape_markdown(text: str) -> str:
 
 
 async def activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /activate command.
-    
-    - Moderators/admins can activate directly
-    - Non-moderators trigger an activation request to admin
-    """
+    """Handle /activate command. Only moderators/admins can activate."""
     chat_id = update.effective_chat.id
     chat_title = update.effective_chat.title or f"Chat {chat_id}"
-    
+
     if not update.effective_user:
         return
 
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = update.effective_user.first_name or "Unknown"
-    last_name = update.effective_user.last_name
-
-    # If already activated, inform user
-    if is_activated(chat_id):
-        return
-
     # Check if user is a moderator or admin
-    if can_moderate_chat(update):
-        ACTIVATED_CHATS.add(chat_id)
-        save_activated_chats(ACTIVATED_CHATS)
-        await update.message.reply_text("✅ Activated.")
+    if not can_moderate_chat(update):
+        await update.message.reply_text("❌ Not authorized. Only moderators can activate the bot.")
         return
 
-    # Non-moderator: create activation request
-    if has_pending_activation_request(chat_id):
-        await update.message.reply_text(
-            "⏳ Activation pending."
-        )
-        return
-
-    # Create activation request
-    request = {
-        "chat_id": chat_id,
-        "chat_title": chat_title,
-        "user_id": user_id,
-        "username": username,
-        "first_name": first_name,
-        "last_name": last_name,
-        "status": "pending"
-    }
-    ACTIVATION_REQUESTS.append(request)
-    save_activation_requests(ACTIVATION_REQUESTS)
-
-    await update.message.reply_text(
-        "📝 Activation request submitted. Admin will be notified."
-    )
-
-    # Notify admin
-    await notify_admin_of_activation_request(
-        update, context, chat_id, chat_title, 
-        user_id, username, first_name, last_name
-    )
-
-
-async def approve_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /approve_activation command - admin approves chat activation."""
-    if update.effective_user.id != ADMIN_USER_ID:
-        return
-
-    if not context.args:
-        await update.message.reply_text("❌ Please provide chat ID.\nUsage: /approve_activation <chat_id>")
-        return
-
-    try:
-        chat_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Invalid chat ID.")
-        return
-
-    # Activate the chat
+    # Add to set (no-op if already present) and save
     ACTIVATED_CHATS.add(chat_id)
     save_activated_chats(ACTIVATED_CHATS)
-
-    # Update request status
-    for req in ACTIVATION_REQUESTS:
-        if req["chat_id"] == chat_id and req["status"] == "pending":
-            req["status"] = "approved"
-            break
-    save_activation_requests(ACTIVATION_REQUESTS)
-
-    await update.message.reply_text(f"✅ Bot activated for `{chat_id}`.", parse_mode="Markdown")
-
-    # Notify the requester
-    for req in ACTIVATION_REQUESTS:
-        if req["chat_id"] == chat_id and req["status"] == "approved" and req["user_id"]:
-            try:
-                await context.bot.send_message(
-                    chat_id=req["user_id"],
-                    text=(
-                        f"🎉 **Your activation request has been approved!**\n\n"
-                        f"The bot is now active in **{escape_markdown(req['chat_title'])}**.\n\n"
-                    ),
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify user of activation approval: {e}")
-            break
-
-
-async def deny_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /deny_activation command - admin denies chat activation."""
-    if update.effective_user.id != ADMIN_USER_ID:
-        return
-
-    if not context.args:
-        await update.message.reply_text("❌ Please provide chat ID.\nUsage: /deny_activation <chat_id>")
-        return
-
-    try:
-        chat_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Invalid chat ID.")
-        return
-
-    # Update request status
-    user_id = None
-    for req in ACTIVATION_REQUESTS:
-        if req["chat_id"] == chat_id and req["status"] == "pending":
-            req["status"] = "denied"
-            user_id = req["user_id"]
-            break
-    save_activation_requests(ACTIVATION_REQUESTS)
-
-    await update.message.reply_text(f"⛔ Activation request for chat ID `{chat_id}` has been denied.", parse_mode="Markdown")
-
-    # Notify the requester
-    if user_id:
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ Activation not approved. Contact the admin."
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify user of activation denial: {e}")
+    logger.info("Activated chat: %s (total: %s)", chat_id, len(ACTIVATED_CHATS))
+    await update.message.reply_text("✅ Bot activated for this chat.")
 
 
 async def deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    
+
     if not can_moderate_chat(update):
+        await update.message.reply_text("❌ Not authorized. Only moderators can deactivate the bot.")
         return
 
     ACTIVATED_CHATS.discard(chat_id)
@@ -248,7 +114,7 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     urls = []
     for chat_id in sorted(ACTIVATED_CHATS):
         url = None
-        
+
         # First try the bot API
         try:
             chat = await context.bot.get_chat(chat_id)
@@ -258,7 +124,7 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 url = f"tg://user?id={chat_id}"
         except Exception as e:
             logger.debug(f"Failed to get chat info via bot API for {chat_id}: {e}")
-        
+
         # If bot API failed or no URL, try Telethon
         if not url:
             try:
@@ -270,7 +136,7 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     url = f"https://t.me/{info['username']}"
             except Exception as e:
                 logger.debug(f"Failed to get chat info via Telethon for {chat_id}: {e}")
-        
+
         if url:
             urls.append(f"{url} (ID: {chat_id})")
         else:
@@ -279,38 +145,12 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Activated chats:\n" + "\n".join(urls))
 
 
-async def list_activation_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List pending activation requests (admin only)."""
-    if update.effective_user.id != ADMIN_USER_ID:
-        return
-
-    pending = [req for req in ACTIVATION_REQUESTS if req["status"] == "pending"]
-    
-    if not pending:
-        await update.message.reply_text("✅ No pending activation requests.")
-        return
-
-    text = "📋 **Pending Activation Requests:**\n\n"
-    for req in pending:
-        name = req["first_name"]
-        if req.get("last_name"):
-            name += f" {req['last_name']}"
-        if req.get("username"):
-            name += f" (@{req['username']})"
-        
-        text += f"📋 Chat: {escape_markdown(req.get('chat_title', 'Unknown'))} (ID: `{req['chat_id']}`)\n"
-        text += f"👤 Requested by: {escape_markdown(name)} (ID: `{req['user_id']}`)\n\n"
-
-    text += "Use /approve_activation <chat_id> or /deny_activation <chat_id>"
-    
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
 async def doorman(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle doorman mode for the current chat - auto-deletes join/leave system messages."""
     chat_id = update.effective_chat.id
 
     if not can_moderate_chat(update):
+        await update.message.reply_text("❌ Not authorized. Only moderators can use doorman.")
         return
 
     if chat_id in DOORMAN_CHATS:
@@ -327,28 +167,28 @@ async def doorman_message_handler(update: Update, context: ContextTypes.DEFAULT_
     """Delete system messages about members joining/leaving in chats with doorman enabled."""
     if not update.effective_chat:
         return
-    
+
     chat_id = update.effective_chat.id
-    
+
     if chat_id not in DOORMAN_CHATS:
         return
-    
+
     # Check if this is a system message about member changes
     message = update.message
     if not message:
         return
-    
+
     # Types of messages to delete:
     # - new_chat_members: users joined
     # - left_chat_member: user left
     # These are indicated by the presence of these fields
     should_delete = False
-    
+
     if message.new_chat_members:
         should_delete = True
     elif message.left_chat_member:
         should_delete = True
-    
+
     if should_delete:
         try:
             await message.delete()

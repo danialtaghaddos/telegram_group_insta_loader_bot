@@ -38,13 +38,11 @@ Moderators can activate/deactivate the bot and manage doorman settings in any ch
 | Command | Description |
 |---------|-------------|
 | `/listChats` | List all activated chats across the bot |
-| `/listmods` | List all moderators with profile links |
+| `/listMods` | List all moderators with profile links |
 | `/approve <user_id>` | Approve a pending moderator access request. Reply to the request notification or provide user ID |
 | `/deny <user_id>` | Deny a pending moderator access request. Reply to the request notification or provide user ID |
 | `/requests` | View all pending moderator access requests |
-| `/access_enabled` | Enable access requests - allows users to use `/access` to request moderator access |
-| `/access_disabled` | Disable access requests - users cannot request moderator access |
-| `/addmod @username` | Manually add a user as moderator |
+| `/addMods @username` | Manually add a user as moderator |
 | `/removemod @username` | Remove a user as moderator |
 | `/activate` | Activate the bot for the current chat (admin has access to all chats) |
 | `/deactivate` | Deactivate the bot for the current chat (admin has access to all chats) |
@@ -63,8 +61,8 @@ Moderators can activate/deactivate the bot and manage doorman settings in any ch
 
 Admin can directly add moderators using:
 
-```
-/addmod @username
+```txt
+/addMods @username
 ```
 
 The new moderator will be able to activate/deactivate the bot in any chat they are a member of.
@@ -91,7 +89,8 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `COOKIES_TXT` | Instagram cookies in netscape format (optional, for private posts) |
 | `FACEBOOK_COOKIES_TXT` | Facebook cookies in netscape format (optional, for private videos) |
 | `YOUTUBE_COOKIES_TXT` | YouTube cookies in netscape format (optional, helps prevent 403 errors) |
-| `JSONBIN_API_KEY` | JSONBin.io API key for cloud storage (optional, enables cloud sync) |
+| `GOOGLE_DRIVE_FOLDER_ID` | Google Drive folder ID for cloud storage (optional, enables cloud sync) |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | Path to Google service account JSON key file (default: `gc-service.json`) |
 
 **Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
 
@@ -127,68 +126,60 @@ Follow the same process for Instagram (instagram.com) or Facebook (facebook.com)
 
 ### Data Storage
 
-The bot stores data in JSON files in the `/data` directory:
+The bot uses Google Drive for cloud storage when configured. If cloud storage is not configured, it falls back to local JSON files so activation state still persists between restarts.
 
-- `activated_chats.json` - List of chat IDs where the bot is activated
-- `doorman_chats.json` - List of chat IDs with doorman mode enabled
-- `moderators.json` - List of moderator user IDs
-- `access_requests.json` - Access request history
-- `settings.json` - Bot settings (e.g., access requests enabled/disabled)
+#### Google Drive Cloud Storage (Recommended)
 
-### Cloud Storage with JSONBin.io (Optional)
+The bot stores data as JSON files in a Google Drive folder. This provides unlimited reads/writes without the request limitations of JSONBin.io.
 
-The bot supports cloud-based storage using [JSONBin.io](https://jsonbin.io) for synchronizing data across multiple instances or deployments. When configured, the bot will:
+**Setup Steps:**
 
-1. **Auto-create bins** on first use if they don't exist (no manual creation needed!)
-2. Store data in the cloud via JSONBin.io API
-3. Keep a local fallback for reliability
-4. Cache data in memory to minimize API calls
+1. **Create a Google Cloud Project**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing one
 
-#### Quick Setup (Fully Automatic)
+2. **Enable Google Drive API**
+   - In your project, go to "APIs & Services" > "Library"
+   - Search for "Google Drive API" and enable it
 
-The easiest way to set up cloud storage - **only one environment variable needed**:
+3. **Create a Service Account**
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "Service Account"
+   - Give it a name (e.g., "telegram-bot") and create
+   - Go to the service account details, click "Keys" > "Add Key" > "Create new key"
+   - Select JSON format and download the key file
+   - Save the file as `gc-service.json` in your project root
 
-1. **Create a JSONBin.io Account**
-   - Go to [jsonbin.io](https://jsonbin.io) and sign up for a free account
-   - Navigate to [API Keys](https://jsonbin.io/app/api-keys) and copy your Master Key
+4. **Share the Google Drive Folder**
+   - **Important**: The folder must be in a **Shared Drive** (not My Drive) because service accounts don't have their own storage quota
+   - Create a Shared Drive in Google Workspace (admin required) or use an existing one
+   - Create a folder in the Shared Drive (or use an existing one)
+   - Get the folder ID from the URL: `https://drive.google.com/drive/folders/FOLDER_ID`
+   - Share the folder with the service account email (found in the JSON key file)
+   - Give it **Editor** permissions
 
-2. **Configure Environment Variables**
+5. **Configure Environment Variables**
 
    ```bash
-   # Add to your .env.local or environment
-   JSONBIN_API_KEY=your_master_key_here
+   GOOGLE_DRIVE_FOLDER_ID=your_folder_id_here
+   GOOGLE_SERVICE_ACCOUNT_FILE=gc-service.json
    ```
 
-   That's it! No other configuration needed.
+The bot will automatically create the following files in your Google Drive folder:
 
-3. **Start the Bot**
-   The bot will automatically:
-   - Create a master metadata bin to store all bin IDs
-   - Create three data bins: `activated_chats`, `doorman_chats`, `activation_requests`
-   - Log the created bin IDs for your reference
+- `activated_chats.json` - List of activated chat IDs
+- `doorman_chats.json` - List of chats with doorman mode enabled
+- `moderators.json` - Moderator permissions data
 
-   Example log output:
+#### Local Storage (Fallback)
 
-   ```
-   ✅ Created master metadata bin with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
-   ✅ Created JSONBin 'activated_chats' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
-   ✅ Created JSONBin 'doorman_chats' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
-   ✅ Created JSONBin 'activation_requests' with ID: 67xxxxxxxxxxxxxxxxxxxxxxxx
-   ```
-
-#### How It Works
-
-- **Master Metadata Bin**: The bot creates a special bin called `telegram_bot_storage_metadata` that stores the IDs of all other bins
-- **Auto-Discovery**: On subsequent starts, the bot reads the master bin to find existing bin IDs
-- **Auto-Creation**: If bins don't exist, they are created automatically
-- **Local Fallback**: If JSONBin.io is unavailable, data is stored locally
+If Google Drive is not configured, local state is stored under `data/` by default. You can override that directory with `BOT_STORAGE_DIR`.
 
 #### Notes
 
-- **Free Tier Limits**: JSONBin.io free tier allows up to 100KB per bin and has request limits
-- **Fallback Mode**: If JSONBin.io is unavailable, the bot falls back to local file storage
-- **No Configuration**: If you don't set the JSONBin API key, the bot uses local storage only
-- **Fully Automatic**: All bin IDs are managed automatically - no manual configuration needed
+- Each read and write goes directly to Google Drive when cloud storage is configured.
+- Local fallback uses plain JSON files and keeps `/activate`, `/deactivate`, and `/listChats` working without Google Drive.
+- The bot automatically creates and manages files in Google Drive - no manual setup required beyond sharing the folder.
 
 ## Deployment Options
 
