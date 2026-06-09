@@ -46,7 +46,18 @@ echo ""
 # Step 1: Update and install system packages
 print_info "Installing system packages..."
 pkg update -y && pkg upgrade -y
-pkg install -y python nodejs ffmpeg wget git curl
+pkg install -y python nodejs ffmpeg wget git curl rust
+
+if [ $? -eq 0 ]; then
+    print_success "System packages installed"
+else
+    print_error "Failed to install system packages"
+    exit 1
+fi
+
+# Step 1b: Install build dependencies for cryptography package
+print_info "Installing build dependencies for Python packages..."
+pkg install -y libffi clang llvm
 
 if [ $? -eq 0 ]; then
     print_success "System packages installed"

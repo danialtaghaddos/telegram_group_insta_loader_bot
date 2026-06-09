@@ -39,8 +39,8 @@ termux-setup-storage
 # Update packages
 pkg update && pkg upgrade
 
-# Install required packages
-pkg install python nodejs ffmpeg wget git curl
+# Install required packages (including Rust for cryptography build)
+pkg install python nodejs ffmpeg wget git curl rust libffi clang llvm
 ```
 
 ### Step 3: Verify Python Version
@@ -360,6 +360,39 @@ If you encounter Python version issues:
 
 ```bash
 # Remove virtual environment
+rm -rf ~/telegram_bot/venv
+
+# Create new one
+python -m venv venv
+
+# Activate and reinstall
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Issue: "Failed to build 'cryptography'" or "Rust not found"
+
+This error occurs when building the `cryptography` package, which requires Rust as a build dependency.
+
+**Solution:**
+
+Install Rust and other build dependencies:
+
+```bash
+pkg install rust libffi clang llvm
+```
+
+Then retry installing Python dependencies:
+
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+If you've already created a virtual environment before installing Rust, you may need to recreate it:
+
+```bash
+# Remove old virtual environment
 rm -rf ~/telegram_bot/venv
 
 # Create new one
