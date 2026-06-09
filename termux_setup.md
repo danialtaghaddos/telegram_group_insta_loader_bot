@@ -403,6 +403,41 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Issue: "maturin failed" or "Failed to determine Android API level"
+
+This error occurs when building Rust-based Python packages (like `cryptography`) on Termux. The maturin build tool needs the Android API level to be set.
+
+**Solution:**
+
+Set the `ANDROID_API_LEVEL` environment variable and retry:
+
+```bash
+# Set Android API level (usually 24 or higher)
+export ANDROID_API_LEVEL=24
+
+# Or auto-detect from your device
+export ANDROID_API_LEVEL=$(getprop ro.build.version.sdk)
+
+# Then retry installing
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+If the above doesn't work, you may need to recreate the virtual environment after setting the environment variable:
+
+```bash
+# Set the environment variable
+export ANDROID_API_LEVEL=24
+
+# Remove and recreate virtual environment
+rm -rf ~/telegram_bot/venv
+python -m venv venv
+
+# Activate and install
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Performance Tips
 
 1. **Limit concurrent downloads**: The bot already has a queue system (max 30 items)

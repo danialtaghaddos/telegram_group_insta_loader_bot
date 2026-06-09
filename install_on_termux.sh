@@ -66,6 +66,18 @@ else
     exit 1
 fi
 
+# Step 1c: Set Android API level for Rust/maturin builds
+print_info "Configuring Android API level for Rust builds..."
+# Get Android API level from Termux (usually 24 or higher)
+if [ -z "$ANDROID_API_LEVEL" ]; then
+    # Try to detect from termux properties or use a sensible default
+    API_LEVEL=$(getprop ro.build.version.sdk 2>/dev/null || echo "24")
+    export ANDROID_API_LEVEL="$API_LEVEL"
+    print_success "Set ANDROID_API_LEVEL=$API_LEVEL"
+else
+    print_success "ANDROID_API_LEVEL already set: $ANDROID_API_LEVEL"
+fi
+
 echo ""
 
 # Step 2: Check Python version
