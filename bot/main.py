@@ -35,7 +35,7 @@ from .moderators import (
     is_moderator,
 )
 from .config import BOT_TOKEN, logger
-from .handlers import handle_message, handle_youtube_callback, handle_cancel_callback
+from .handlers import handle_message, handle_youtube_callback, handle_cancel_callback, handle_large_file_callback
 from .worker import worker
 
 async def on_startup(app):
@@ -104,6 +104,9 @@ def main():
 
     # Cancel callback handler for active downloads
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel_\d+$"))
+
+    # Large file handling callback (compress or Google Drive)
+    app.add_handler(CallbackQueryHandler(handle_large_file_callback, pattern=r"^(compress|drive)_\d+$"))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

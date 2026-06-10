@@ -3,13 +3,14 @@ import asyncio
 import shutil
 import tempfile
 
-from telegram import InputMediaPhoto, InputMediaVideo
+from telegram import InputMediaPhoto, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.utils import get_file_size_mb
+from bot.utils import get_file_size_mb, compress_audio
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
 from .config import queue, logger, active_tasks
+from .storage import upload_file_to_drive
 
 
 def is_audio_file(file_path: str) -> bool:
@@ -193,15 +194,125 @@ async def worker():
                         except:
                             pass
                         
-                        # Check if cancelled before uploading
-                        if check_cancelled(task_id):
-                            logger.info(f"Task {task_id} cancelled before audio upload")
+                        # Check file size - if > 50MB, ask user for choice
+                        file_size_mb = get_file_size_mb(file_path)
+                        logger.info(f"Audio file size: {file_size_mb:.1f}MB")
+                        
+                        if file_size_mb > 50:
+                            # File is too large for Telegram, ask user for choice
+                            logger.info(f"Audio file {file_size_mb:.1f}MB exceeds 50MB limit, asking user for choice")
+                            
+                            # Store file path in task info for later use
+                            if task_id and task_id in active_tasks:
+                                active_tasks[task_id]["audio_file_path"] = file_path
+                            
+                            # Create keyboard with compression and Google Drive options
+                            keyboard = [
+                                [InlineKeyboardButton("🗜️ Compress & Send", callback_data=f"compress_{task_id}")],
+                                [InlineKeyboardButton("📁 Google Drive", callback_data=f"drive_{task_id}")]
+                            ]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+                            
                             try:
-                                await status_msg.edit_text("❌ Download cancelled.")
+                                await status_msg.edit_text(
+                                    f"⚠️ Audio file is {file_size_mb:.1f}MB (limit is 50MB).\n\n"
+                                    f"Choose an option:",
+                                    reply_markup=reply_markup
+                                )
                             except:
                                 pass
-                            continue
-
+                            
+                            # Wait for user to choose (poll for action)
+                            user_action = None
+                            wait_attempts = 0
+                            max_wait_attempts = 120  # Wait up to 60 seconds (2 seconds * 30 attempts)
+                            
+                            while wait_attempts < max_wait_attempts:
+                                if check_cancelled(task_id):
+                                    logger.info(f"Task {task_id} cancelled while waiting for user choice")
+                                    try:
+                                        await status_msg.edit_text("❌ Download cancelled.")
+                                    except:
+                                        pass
+                                    break
+                                
+                                # Check if user has made a choice
+                                task_info = active_tasks.get(task_id, {})
+                                user_action = task_info.get("large_file_action")
+                                
+                                if user_action:
+                                    logger.info(f"User chose: {user_action}")
+                                    break
+                                
+                                await asyncio.sleep(0.5)
+                                wait_attempts += 1
+                            
+                            if not user_action or check_cancelled(task_id):
+                                continue
+                            
+                            # Update status based on user choice
+                            if user_action == "compress":
+                                try:
+                                    await status_msg.edit_text("🗜️ Compressing audio...")
+                                except:
+                                    pass
+                                
+                                # Compress audio
+                                file_path = compress_audio(file_path)
+                                file_size_mb = get_file_size_mb(file_path)
+                                logger.info(f"Compressed audio size: {file_size_mb:.1f}MB")
+                                
+                                # If still too large after compression, fall back to Google Drive
+                                if file_size_mb > 50:
+                                    logger.info(f"Compressed file still {file_size_mb:.1f}MB, using Google Drive")
+                                    try:
+                                        await status_msg.edit_text("📁 Uploading to Google Drive...")
+                                    except:
+                                        pass
+                                    user_action = "drive"
+                            
+                            if user_action == "drive":
+                                # Upload to Google Drive
+                                try:
+                                    await status_msg.edit_text("📁 Uploading to Google Drive...")
+                                except:
+                                    pass
+                                
+                                drive_link = upload_file_to_drive(file_path)
+                                
+                                if drive_link:
+                                    try:
+                                        await status_msg.edit_text(
+                                            f"📁 File uploaded to Google Drive ({file_size_mb:.1f}MB):\n\n"
+                                            f"{drive_link}\n\n"
+                                            f"Click the link to download."
+                                        )
+                                    except:
+                                        if chat_id:
+                                            await context.bot.send_message(
+                                                chat_id=chat_id,
+                                                text=f"📁 File uploaded to Google Drive ({file_size_mb:.1f}MB):\n\n{drive_link}"
+                                            )
+                                    logger.info(f"✅ Uploaded to Google Drive: {drive_link}")
+                                else:
+                                    try:
+                                        await status_msg.edit_text("❌ Failed to upload to Google Drive.")
+                                    except:
+                                        pass
+                                    logger.error("Google Drive upload failed")
+                                continue
+                            
+                            # If user chose compress and it worked, fall through to upload
+                            # Check if cancelled before uploading after compression
+                            if check_cancelled(task_id):
+                                logger.info(f"Task {task_id} cancelled before audio upload")
+                                try:
+                                    await status_msg.edit_text("❌ Download cancelled.")
+                                except:
+                                    pass
+                                continue
+                        
+                        # File is within limit or was compressed successfully
                         try:
                             await status_msg.edit_text(f"🚀 Uploading audio ...")
                         except:

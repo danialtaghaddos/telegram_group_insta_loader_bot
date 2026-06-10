@@ -452,3 +452,121 @@ def load_youtube_cookies() -> str:
         The cookies content as a string, or empty string if not found.
     """
     return _load_cookie_from_drive("youtube_cookies.txt")
+
+
+# ============================================================================
+# Large File Upload to Google Drive
+# ============================================================================
+
+# Default folder ID for large file uploads (from user configuration)
+# https://drive.google.com/drive/folders/1ldBfxj2GQ8hsUzR17423Gr1E5R0-m1Fk?usp=sharing
+LARGE_FILE_FOLDER_ID = os.getenv("LARGE_FILE_FOLDER_ID", "1ldBfxj2GQ8hsUzR17423Gr1E5R0-m1Fk")
+
+
+def upload_file_to_drive(file_path: str, folder_id: str = LARGE_FILE_FOLDER_ID) -> str:
+    """
+    Upload a file to Google Drive and return a shareable link.
+    
+    IMPORTANT: Service accounts require a Shared Drive (not regular My Drive) to upload files.
+    See: https://developers.google.com/workspace/drive/api/guides/manage-shareddrives
+    
+    Args:
+        file_path: Path to the file to upload
+        folder_id: Google Drive folder ID (must be in a Shared Drive for service accounts)
+    
+    Returns:
+        Shareable link to the uploaded file, or empty string if upload fails
+    """
+    service = _get_drive_service()
+    if not service:
+        logger.error("Google Drive service not available for file upload")
+        return ""
+    
+    if not folder_id:
+        logger.error("No folder ID provided for file upload")
+        return ""
+    
+    try:
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+        
+        logger.info(f"Uploading file to Google Drive: {file_name} ({file_size / (1024*1024):.1f}MB)")
+        
+        # Create file metadata
+        file_metadata = {
+            'name': file_name,
+            'parents': [folder_id]
+        }
+        
+        # Upload file with Shared Drive support
+        from googleapiclient.http import MediaFileUpload
+        media = MediaFileUpload(
+            file_path,
+            mimetype='application/octet-stream',
+            resumable=True,
+            chunksize=256 * 1024  # 256KB chunks
+        )
+        
+        request = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name, webContentLink, webViewLink',
+            supportsAllDrives=True  # Important for Shared Drives
+        )
+        
+        uploaded_file = request.execute()
+        file_id = uploaded_file.get('id')
+        
+        if not file_id:
+            logger.error(f"File upload failed: no file ID returned")
+            return ""
+        
+        logger.info(f"✅ File uploaded to Google Drive: {uploaded_file.get('name')} (ID: {file_id})")
+        
+        # Set permissions: anyone with link can view/download
+        # For Shared Drives, we need to set inheritFromParent=False
+        permission = {
+            'type': 'anyone',
+            'role': 'reader'
+        }
+        
+        service.permissions().create(
+            fileId=file_id,
+            body=permission,
+            fields='id',
+            supportsAllDrives=True  # Important for Shared Drives
+        ).execute()
+        
+        # Get the shareable link
+        file_info = service.files().get(
+            fileId=file_id,
+            fields='webContentLink, webViewLink',
+            supportsAllDrives=True  # Important for Shared Drives
+        ).execute()
+        
+        # Prefer webContentLink (direct download link) over webViewLink
+        shareable_link = file_info.get('webContentLink') or file_info.get('webViewLink')
+        
+        if shareable_link:
+            logger.info(f"✅ Shareable link created: {shareable_link}")
+            return shareable_link
+        else:
+            logger.warning(f"File uploaded but no shareable link available")
+            return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+        
+    except Exception as exc:
+        # Check for storage quota error (common with service accounts on regular Drive)
+        if hasattr(exc, 'resp') and getattr(exc.resp, 'status', None) == 403:
+            error_details = str(exc)
+            if 'storageQuotaExceeded' in error_details or 'Service Accounts do not have storage quota' in error_details:
+                logger.error(
+                    "❌ Storage quota exceeded. Service accounts cannot upload to regular My Drive folders.\n"
+                    "SOLUTION: Use a Shared Drive instead.\n"
+                    "1. Create a Shared Drive: https://drive.google.com/drive/create\n"
+                    "2. Add your service account email as 'Content Manager'\n"
+                    "3. Create a folder in the Shared Drive\n"
+                    "4. Set LARGE_FILE_FOLDER_ID env var to that folder's ID\n\n"
+                    "See: https://developers.google.com/workspace/drive/api/guides/manage-shareddrives"
+                )
+        logger.error(f"Failed to upload file to Google Drive: {exc}")
+        return ""

@@ -211,6 +211,52 @@ async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
         except:
             pass
     
-    # Remove from active tasks after a short delay to allow the worker to see the cancellation
+    # Remove from active_tasks after a short delay to allow the worker to see the cancellation
     # The worker will remove it from active_tasks when it processes the cancellation
     logger.info(f"Task {task_id} marked as cancelled")
+
+
+async def handle_large_file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback for large file handling choice (compress or Google Drive)"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    # Parse callback data: "compress_{task_id}" or "drive_{task_id}"
+    parts = data.split("_", 1)
+    if len(parts) < 2:
+        return
+    
+    action = parts[0]  # "compress" or "drive"
+    
+    try:
+        task_id = int(parts[1])
+    except ValueError:
+        return
+    
+    # Check if task exists
+    if task_id not in active_tasks:
+        try:
+            await query.message.delete()
+        except:
+            pass
+        return
+    
+    task_info = active_tasks[task_id]
+    
+    # Store the user's choice in the task info
+    task_info["large_file_action"] = action
+    
+    # Update status message
+    if action == "compress":
+        try:
+            await query.message.edit_text("🗜️ Compressing audio...")
+        except:
+            pass
+    elif action == "drive":
+        try:
+            await query.message.edit_text("📁 Uploading to Google Drive...")
+        except:
+            pass
+    
+    logger.info(f"Task {task_id}: User chose to {action} large audio file")
