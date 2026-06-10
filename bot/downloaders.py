@@ -5,6 +5,11 @@ import json
 import requests as requests_module
 
 from .config import logger
+from .storage import (
+    load_instagram_cookies,
+    load_facebook_cookies,
+    load_youtube_cookies,
+)
 
 TMP_PATH = tempfile.gettempdir()
 
@@ -34,7 +39,7 @@ def _extract_instagram_caption_from_page(url: str) -> str:
         shortcode = match.group(1)
         
         # Get cookies for authentication
-        cookiefile = get_cookies_file()
+        cookiefile = get_instagram_cookies_file()
         if not cookiefile or not os.path.exists(cookiefile):
             logger.debug("No cookies file available for API access")
             return ""
@@ -134,7 +139,7 @@ async def fetch_instagram_caption(url: str) -> str:
     
     # Method 1: Try yt-dlp first (works for videos and carousels)
     try:
-        cookiefile = get_cookies_file()
+        cookiefile = get_instagram_cookies_file()
         
         ydl_opts = {
             "quiet": True,
@@ -183,13 +188,16 @@ async def fetch_instagram_caption(url: str) -> str:
     
     return caption or ""
 
-def get_cookies_file():
-    """Returns Instagram cookies file (existing behavior)"""
-    path = f"{TMP_PATH}/cookies.txt"
+def get_instagram_cookies_file():
+    """Returns Instagram cookies file, loading from Google Drive storage."""
+    path = f"{TMP_PATH}/instagram_cookies.txt"
     
+    # Check if file already exists and is valid
     if os.path.exists(path) and os.path.getsize(path) > 10:
         return path
-    cookies = os.getenv("COOKIES_TXT")
+    
+    # Load cookies from Google Drive storage
+    cookies = load_instagram_cookies()
     if not cookies or not cookies.strip():
         return None
 
@@ -203,13 +211,15 @@ def get_cookies_file():
 
 
 def get_facebook_cookies_file():
-    """Writes Facebook cookies from env var if provided"""
+    """Returns Facebook cookies file, loading from Google Drive storage."""
     path = f"{TMP_PATH}/facebook_cookies.txt"
     
+    # Check if file already exists and is valid
     if os.path.exists(path) and os.path.getsize(path) > 10:
         return path
     
-    cookies = os.getenv("FACEBOOK_COOKIES_TXT")
+    # Load cookies from Google Drive storage
+    cookies = load_facebook_cookies()
     if not cookies or not cookies.strip():
         return None
 
@@ -223,13 +233,15 @@ def get_facebook_cookies_file():
 
 
 def get_youtube_cookies_file():
-    """Writes YouTube cookies from env var if provided"""
+    """Returns YouTube cookies file, loading from Google Drive storage."""
     path = f"{TMP_PATH}/youtube_cookies.txt"
     
+    # Check if file already exists and is valid
     if os.path.exists(path) and os.path.getsize(path) > 10:
         return path
     
-    cookies = os.getenv("YOUTUBE_COOKIES_TXT")
+    # Load cookies from Google Drive storage
+    cookies = load_youtube_cookies()
     if not cookies or not cookies.strip():
         return None
 
@@ -243,7 +255,7 @@ def get_youtube_cookies_file():
 
 async def download_with_ytdlp(url: str, temp_dir: str):
     is_facebook = "facebook.com" in url or "fb.watch" in url
-    cookiefile = get_facebook_cookies_file() if is_facebook else get_cookies_file()
+    cookiefile = get_facebook_cookies_file() if is_facebook else get_instagram_cookies_file()
 
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
@@ -282,7 +294,7 @@ async def download_with_ytdlp(url: str, temp_dir: str):
 async def download_with_gallery_dl(url: str, temp_dir: str):
     cmd = [
         "gallery-dl",
-        "--cookies", get_cookies_file() or "",  # fallback to Instagram cookies
+        "--cookies", get_instagram_cookies_file() or "",  # fallback to Instagram cookies
         "-d", temp_dir,
         url,
     ]

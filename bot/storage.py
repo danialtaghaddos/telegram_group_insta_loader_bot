@@ -378,3 +378,77 @@ def get_storage_info() -> dict:
             "access_requests": _get_access_requests_storage()._file_id,
         },
     }
+
+
+# ============================================================================
+# Cookie Storage Functions (Google Drive, read-only, no fallback)
+# ============================================================================
+
+def _load_cookie_from_drive(file_name: str) -> str:
+    """Load cookie content from Google Drive (no local fallback).
+    
+    Args:
+        file_name: The name of the cookie file (e.g., 'instagram_cookies.txt')
+    
+    Returns:
+        The cookie content as a string, or empty string if not found.
+    """
+    service = _get_drive_service()
+    if not service or not GOOGLE_DRIVE_FOLDER_ID:
+        logger.warning(f"Google Drive not configured for {file_name}")
+        return ""
+    
+    try:
+        # Search for the cookie file in the Drive folder
+        query = f"name='{file_name}' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false"
+        response = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)'
+        ).execute()
+        
+        files = response.get('files', [])
+        if not files:
+            logger.debug(f"Cookie file '{file_name}' not found in Google Drive")
+            return ""
+        
+        # Download file content
+        file_id = files[0]['id']
+        request = service.files().get_media(fileId=file_id)
+        content = request.execute()
+        
+        if isinstance(content, bytes):
+            content = content.decode('utf-8')
+        
+        logger.info(f"✅ Loaded '{file_name}' from Google Drive")
+        return content
+        
+    except Exception as exc:
+        logger.error(f"Failed to load '{file_name}' from Google Drive: {exc}")
+        return ""
+
+
+def load_instagram_cookies() -> str:
+    """Load Instagram cookies from Google Drive storage (no fallback).
+    
+    Returns:
+        The cookies content as a string, or empty string if not found.
+    """
+    return _load_cookie_from_drive("instagram_cookies.txt")
+
+
+def load_facebook_cookies() -> str:
+    """Load Facebook cookies from Google Drive storage (no fallback).
+    
+    Returns:
+        The cookies content as a string, or empty string if not found.
+    """
+    return _load_cookie_from_drive("facebook_cookies.txt")
+
+def load_youtube_cookies() -> str:
+    """Load YouTube cookies from Google Drive storage (no fallback).
+    
+    Returns:
+        The cookies content as a string, or empty string if not found.
+    """
+    return _load_cookie_from_drive("youtube_cookies.txt")

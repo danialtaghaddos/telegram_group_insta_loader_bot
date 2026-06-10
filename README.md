@@ -86,10 +86,7 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 | `TELEGRAM_API_HASH` | Telegram API HASH for Telethon (optional, enables username resolution) |
 | `TELEGRAM_SESSION_STRING` | Telethon session string (optional, for persistent sessions) |
 | `YOUTUBE_AUDIO_FORMAT` | Audio format for YouTube downloads: `mp3` or `m4a` (default: `m4a`) |
-| `COOKIES_TXT` | Instagram cookies in netscape format (optional, for private posts) |
-| `FACEBOOK_COOKIES_TXT` | Facebook cookies in netscape format (optional, for private videos) |
-| `YOUTUBE_COOKIES_TXT` | YouTube cookies in netscape format (optional, helps prevent 403 errors) |
-| `GOOGLE_DRIVE_FOLDER_ID` | Google Drive folder ID for cloud storage (optional, enables cloud sync) |
+| `GOOGLE_DRIVE_FOLDER_ID` | Google Drive folder ID for cloud storage (required) |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | Path to Google service account JSON key file (default: `gc-service.json`) |
 
 **Note:** Setting `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` enables the bot to:
@@ -99,30 +96,57 @@ The new moderator will be able to activate/deactivate the bot in any chat they a
 
 To get your API credentials, visit [my.telegram.org](https://my.telegram.org).
 
-### Obtaining Cookies (Optional)
+### Obtaining Cookies (Optional but Recommended)
 
-Cookies help prevent 403 errors and allow downloading private/restricted content.
+Cookies help prevent 403 errors and allow downloading private/restricted content. The bot loads cookies from Google Drive storage - simply upload your cookies files to the configured Google Drive folder.
 
-#### Getting YouTube Cookies
+#### Step 1: Export Cookies from Your Browser
 
-YouTube cookies are particularly useful for preventing 403 Forbidden errors when downloading videos.
+**For YouTube (prevents 403 Forbidden errors):**
 
 1. Install a browser extension like "Get cookies.txt LOCALLY" (Chrome/Firefox)
 2. Log in to YouTube in your browser
 3. Use the extension to export cookies from youtube.com in Netscape format
-4. Save the content and set it as the `YOUTUBE_COOKIES_TXT` environment variable
+4. Save the exported content
+
+**For Instagram (enables private post downloads):**
+
+1. Log in to Instagram in your browser
+2. Use the same extension to export cookies from instagram.com
+3. Save the exported content
+
+**For Facebook (enables private video downloads):**
+
+1. Log in to Facebook in your browser
+2. Use the same extension to export cookies from facebook.com
+3. Save the exported content
 
 Alternatively, you can use yt-dlp to extract cookies:
 
 ```bash
-yt-dlp --cookies-from-browser chrome --cookies cookies.txt "https://www.youtube.com/watch?v=VIDEO_ID"
+# YouTube cookies
+yt-dlp --cookies-from-browser chrome --cookies youtube_cookies.txt "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Instagram cookies
+yt-dlp --cookies-from-browser chrome --cookies instagram_cookies.txt "https://www.instagram.com/p/POST_ID/"
 ```
 
-#### Getting Instagram/Facebook Cookies
+#### Step 2: Upload Cookies to Google Drive
 
-Follow the same process for Instagram (instagram.com) or Facebook (facebook.com) content.
+Upload your cookies files to the Google Drive folder configured in `GOOGLE_DRIVE_FOLDER_ID`:
 
-**Note:** Cookies are sensitive data. Keep them private and never share them publicly.
+| File Name | Purpose |
+|-----------|---------|
+| `instagram_cookies.txt` | Instagram cookies for private post downloads |
+| `facebook_cookies.txt` | Facebook cookies for private video downloads |
+| `youtube_cookies.txt` | YouTube cookies to prevent 403 errors |
+
+**Important Notes:**
+
+- The bot requires `GOOGLE_DRIVE_FOLDER_ID` to be configured for cookies to work
+- Cookies are sensitive data. Keep them private and never share them publicly
+- Refresh your cookies periodically as they may expire
+- Make sure the cookies are in Netscape format (tab-separated values)
 
 ### Data Storage
 
