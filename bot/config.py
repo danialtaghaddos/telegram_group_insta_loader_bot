@@ -10,6 +10,7 @@ load_dotenv(".env.local")
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))
 
 TMP_PATH = tempfile.gettempdir()
 MAX_MEDIA_PER_MESSAGE = 5

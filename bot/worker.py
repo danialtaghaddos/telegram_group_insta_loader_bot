@@ -3,14 +3,14 @@ import asyncio
 import shutil
 import tempfile
 
-from telegram import InputMediaPhoto, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InputMediaPhoto, InputMediaVideo
 
 from bot.utils import get_file_size_mb, compress_audio
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
-from .config import queue, logger, active_tasks
-from .storage import upload_file_to_drive
+from .config import queue, logger, active_tasks, ADMIN_USER_ID
+from .telethon_client import upload_to_admin_chat
 
 
 def is_audio_file(file_path: str) -> bool:
@@ -89,16 +89,14 @@ async def worker():
         try:
             # Fallback: try to get message from update, then from status_msg.reply_to_message
             if message is None:
-                message = update.message if update.message else None
+                message = update.effective_message if update.effective_message else None
             if message is None and status_msg and status_msg.reply_to_message:
                 message = status_msg.reply_to_message
             
             # Get chat_id for fallback sending (when message is None)
-            chat_id = None
-            if message is None:
-                chat_id = status_msg.chat_id if status_msg else None
-                if chat_id is None:
-                    chat_id = update.effective_chat.id if update.effective_chat else None
+            chat_id = status_msg.chat_id if status_msg else None
+            if chat_id is None:
+                chat_id = update.effective_chat.id if update.effective_chat else None
             
             url_lower = url.lower()
             if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
@@ -111,7 +109,7 @@ async def worker():
                 platform = "Unknown"
 
             try:
-                await status_msg.edit_text("🤖 I'm on it boss...")
+                await status_msg.edit_text("🤖 Loading...")
             except:
                 pass
 
@@ -126,7 +124,7 @@ async def worker():
                 if check_cancelled(task_id):
                     logger.info(f"Task {task_id} cancelled before download")
                     try:
-                        await status_msg.edit_text("❌ Download cancelled.")
+                        await status_msg.delete()
                     except:
                         pass
                     continue
@@ -138,7 +136,7 @@ async def worker():
                 if check_cancelled(task_id):
                     logger.info(f"Task {task_id} cancelled after download")
                     try:
-                        await status_msg.edit_text("❌ Download cancelled.")
+                        await status_msg.delete()
                     except:
                         pass
                     continue
@@ -158,7 +156,7 @@ async def worker():
                     if check_cancelled(task_id):
                         logger.info(f"Task {task_id} cancelled before caption fetch")
                         try:
-                            await status_msg.edit_text("❌ Download cancelled.")
+                            await status_msg.delete()
                         except:
                             pass
                         continue
@@ -172,10 +170,6 @@ async def worker():
                     if caption and len(caption) > 1000:
                         caption = caption[:997] + "..."
 
-                # Track uploaded message info for caching
-                uploaded_chat_id = None
-                uploaded_message_ids = []
-
                 if len(files) == 1:
                     file_path = files[0]
                     if is_audio_file(file_path):
@@ -184,7 +178,7 @@ async def worker():
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled before audio processing")
                             try:
-                                await status_msg.edit_text("❌ Download cancelled.")
+                                await status_msg.delete()
                             except:
                                 pass
                             continue
@@ -194,125 +188,43 @@ async def worker():
                         except:
                             pass
                         
-                        # Check file size - if > 50MB, ask user for choice
+                        # Check file size
                         file_size_mb = get_file_size_mb(file_path)
                         logger.info(f"Audio file size: {file_size_mb:.1f}MB")
                         
                         if file_size_mb > 50:
-                            # File is too large for Telegram, ask user for choice
-                            logger.info(f"Audio file {file_size_mb:.1f}MB exceeds 50MB limit, asking user for choice")
-                            
-                            # Store file path in task info for later use
-                            if task_id and task_id in active_tasks:
-                                active_tasks[task_id]["audio_file_path"] = file_path
-                            
-                            # Create keyboard with compression and Google Drive options
-                            keyboard = [
-                                [InlineKeyboardButton("🗜️ Compress & Send", callback_data=f"compress_{task_id}")],
-                                [InlineKeyboardButton("📁 Google Drive", callback_data=f"drive_{task_id}")]
-                            ]
-                            reply_markup = InlineKeyboardMarkup(keyboard)
+                            # File is too large for Telegram bot, use Telethon user account
+                            logger.info(f"Audio file {file_size_mb:.1f}MB exceeds 50MB limit, using Telethon")
                             
                             try:
-                                await status_msg.edit_text(
-                                    f"⚠️ Audio file is {file_size_mb:.1f}MB (limit is 50MB).\n\n"
-                                    f"Choose an option:",
-                                    reply_markup=reply_markup
-                                )
+                                await status_msg.edit_text(f"🚀 Uploading large file ...\n🔜 This may take a few minutes")
                             except:
                                 pass
                             
-                            # Wait for user to choose (poll for action)
-                            user_action = None
-                            wait_attempts = 0
-                            max_wait_attempts = 120  # Wait up to 60 seconds (2 seconds * 30 attempts)
+                            # Upload to admin chat using Telethon
+                            # Caption format: chat_id-status_msg_id-file_name
+                            admin_msg_id = await upload_to_admin_chat(file_path, chat_id, status_msg.message_id, update.effective_message.message_id if update.effective_message else original_reply_to_message_id)
                             
-                            while wait_attempts < max_wait_attempts:
-                                if check_cancelled(task_id):
-                                    logger.info(f"Task {task_id} cancelled while waiting for user choice")
-                                    try:
-                                        await status_msg.edit_text("❌ Download cancelled.")
-                                    except:
-                                        pass
-                                    break
-                                
-                                # Check if user has made a choice
-                                task_info = active_tasks.get(task_id, {})
-                                user_action = task_info.get("large_file_action")
-                                
-                                if user_action:
-                                    logger.info(f"User chose: {user_action}")
-                                    break
-                                
-                                await asyncio.sleep(0.5)
-                                wait_attempts += 1
-                            
-                            if not user_action or check_cancelled(task_id):
-                                continue
-                            
-                            # Update status based on user choice
-                            if user_action == "compress":
+                            if admin_msg_id:
+                                logger.info(f"✅ Large file uploaded to admin chat. Admin should forward to bot.")
+                                # The bot will handle the file when admin forwards it
+                                # Just delete the status message - the bot will send the file as its own
                                 try:
-                                    await status_msg.edit_text("🗜️ Compressing audio...")
+                                    await status_msg.delete()
                                 except:
                                     pass
-                                
-                                # Compress audio
-                                file_path = compress_audio(file_path)
-                                file_size_mb = get_file_size_mb(file_path)
-                                logger.info(f"Compressed audio size: {file_size_mb:.1f}MB")
-                                
-                                # If still too large after compression, fall back to Google Drive
-                                if file_size_mb > 50:
-                                    logger.info(f"Compressed file still {file_size_mb:.1f}MB, using Google Drive")
-                                    try:
-                                        await status_msg.edit_text("📁 Uploading to Google Drive...")
-                                    except:
-                                        pass
-                                    user_action = "drive"
-                            
-                            if user_action == "drive":
-                                # Upload to Google Drive
+                            else:
+                                logger.error("Telethon upload failed")
                                 try:
-                                    await status_msg.edit_text("📁 Uploading to Google Drive...")
+                                    await status_msg.edit_text(
+                                        "❌ File too large for bot. Please set up Telethon session.\n"
+                                        "Run: python generate_session.py"
+                                    )
                                 except:
                                     pass
-                                
-                                drive_link = upload_file_to_drive(file_path)
-                                
-                                if drive_link:
-                                    try:
-                                        await status_msg.edit_text(
-                                            f"📁 File uploaded to Google Drive ({file_size_mb:.1f}MB):\n\n"
-                                            f"{drive_link}\n\n"
-                                            f"Click the link to download."
-                                        )
-                                    except:
-                                        if chat_id:
-                                            await context.bot.send_message(
-                                                chat_id=chat_id,
-                                                text=f"📁 File uploaded to Google Drive ({file_size_mb:.1f}MB):\n\n{drive_link}"
-                                            )
-                                    logger.info(f"✅ Uploaded to Google Drive: {drive_link}")
-                                else:
-                                    try:
-                                        await status_msg.edit_text("❌ Failed to upload to Google Drive.")
-                                    except:
-                                        pass
-                                    logger.error("Google Drive upload failed")
-                                continue
-                            
-                            # If user chose compress and it worked, fall through to upload
-                            # Check if cancelled before uploading after compression
-                            if check_cancelled(task_id):
-                                logger.info(f"Task {task_id} cancelled before audio upload")
-                                try:
-                                    await status_msg.edit_text("❌ Download cancelled.")
-                                except:
-                                    pass
-                                continue
+                            continue
                         
-                        # File is within limit or was compressed successfully
+                        # File is within limit, upload normally via bot
                         try:
                             await status_msg.edit_text(f"🚀 Uploading audio ...")
                         except:

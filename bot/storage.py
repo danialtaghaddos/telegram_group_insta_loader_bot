@@ -455,7 +455,7 @@ def load_youtube_cookies() -> str:
 
 
 # ============================================================================
-# Large File Upload to Google Drive
+# Large File Upload to Google Drive (Legacy - kept for backward compatibility)
 # ============================================================================
 
 # Default folder ID for large file uploads (from user configuration)

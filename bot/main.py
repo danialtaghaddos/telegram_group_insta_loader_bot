@@ -34,14 +34,86 @@ from .moderators import (
     load_command,
     is_moderator,
 )
-from .config import BOT_TOKEN, logger
-from .handlers import handle_message, handle_youtube_callback, handle_cancel_callback, handle_large_file_callback
+from .config import BOT_TOKEN, logger, ADMIN_USER_ID
+from .handlers import handle_message, handle_cancel_callback
 from .worker import worker
+import re
 
 async def on_startup(app):
     load_activation_state()
     for _ in range(1):
         asyncio.create_task(worker())
+
+
+async def handle_admin_forwarded_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle files forwarded by admin with caption format: chat_id-status_msg_id-file_name
+    
+    Flow:
+    1. Check if message is from admin
+    2. Parse caption to get target chat_id and status_msg_id
+    3. Forward the message to target chat (avoids re-downloading large file)
+    4. Clean up status message and received message
+    """
+    # Only process messages from the admin
+    if not update.message or not update.effective_user:
+        return
+    
+    if update.effective_user.id != ADMIN_USER_ID:
+        return
+    
+    # Check for caption (required for our format)
+    message = update.message
+    caption = message.caption if message.caption else ""
+    
+    # Parse caption format: chat_id-status_msg_id-original_reply_to_message_id-file_name
+    # Example: "123456789-42-987654321-video.mp4"
+    match = re.match(r'^(-?\d+)-(\d+)-(\d+)-(.+)$', caption)
+    if not match:
+        return  # Not our special format, ignore
+    
+    target_chat_id = int(match.group(1))
+    status_msg_id = int(match.group(2))
+    original_reply_to_message_id = int(match.group(3))
+    file_name = match.group(4)
+    
+    logger.info(f"Received large file from admin: chat_id={target_chat_id}, status_msg_id={status_msg_id}, original_reply_to_message_id={original_reply_to_message_id}, file={file_name}")
+    
+    try:
+        # Forward the message to target chat (avoids re-uploading the large file)
+        await context.bot.copy_message(
+            chat_id=target_chat_id,
+            from_chat_id=message.chat_id,
+            message_id=message.message_id,
+            caption=''  # Optionally set caption to file name in target chat
+        )
+        await context.bot.send_message(
+            chat_id=target_chat_id,
+            text=f"✅ Your file is ready. 👆",
+            reply_to_message_id=original_reply_to_message_id
+        )
+        logger.info(f"✅ Forwarded large file to chat {target_chat_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to forward message to {target_chat_id}: {e}")
+    
+    # Clean up: delete the received message from bot chat
+    try:
+        await message.delete()
+        logger.info(f"Deleted received file message {message.message_id}")
+    except Exception as e:
+        logger.warning(f"Failed to delete received message: {e}")
+    
+    # Clean up: delete the status message if it still exists
+    if status_msg_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=target_chat_id,
+                message_id=status_msg_id
+            )
+            logger.info(f"Deleted status message {status_msg_id} in chat {target_chat_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete status message (may have been already deleted): {e}")
 
 
 async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,14 +171,8 @@ def main():
     # Admin load command (reply to message with links to download)
     app.add_handler(CommandHandler("load", load_command))
 
-    # YouTube callback handler (must be before message handlers to catch callbacks)
-    app.add_handler(CallbackQueryHandler(handle_youtube_callback, pattern=r"^yt_(audio|cancel)_\d+$"))
-
     # Cancel callback handler for active downloads
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel_\d+$"))
-
-    # Large file handling callback (compress or Google Drive)
-    app.add_handler(CallbackQueryHandler(handle_large_file_callback, pattern=r"^(compress|drive)_\d+$"))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(
@@ -116,6 +182,12 @@ def main():
 
     # example protected message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, protected_handler))
+
+    # Handler for large files forwarded by admin
+    app.add_handler(MessageHandler(
+        filters.Document.ALL | filters.AUDIO | filters.VIDEO | filters.PHOTO,
+        handle_admin_forwarded_file
+    ))
 
     app.run_polling()
 

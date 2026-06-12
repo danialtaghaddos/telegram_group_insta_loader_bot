@@ -1,7 +1,8 @@
 # bot/telethon_client.py
 """
-Telethon client for resolving usernames and getting chat information.
-This allows the bot to resolve any public username without requiring prior interaction.
+Telethon client for resolving usernames, getting chat information, and uploading large files.
+This allows the bot to resolve any public username without requiring prior interaction,
+and upload large files via user account to bypass bot file size limits.
 """
 
 import os
@@ -119,6 +120,67 @@ async def get_chat_info(chat_id: int) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"Failed to get chat info for {chat_id} via Telethon: {e}")
         return None
+
+
+async def upload_to_admin_chat(file_path: str, chat_id: int, status_msg_id: int, original_reply_to_message_id: int) -> Optional[int]:
+    """
+    Upload a file to the admin's chat using the user account.
+    The admin will then forward this to the bot, which will send it as its own message.
+    
+    Caption format: "{chat_id}-{status_msg_id}-{original_reply_to_message_id}-{file_name}"
+    This allows the bot to identify the target chat and status message to clean up.
+    
+    Args:
+        file_path: Path to the file to upload
+        chat_id: Target chat ID where the bot should send the file
+        status_msg_id: Message ID of the status message (for cleanup)
+        original_reply_to_message_id: Message ID of the original reply-to message
+    
+    Returns:
+        Message ID of the uploaded file in admin's chat, or None if failed
+    """
+    client = get_telethon_client()
+    if not client:
+        logger.error("Telethon client not available for file upload")
+        return None
+    
+    try:
+        # Ensure client is connected
+        if not client.is_connected():
+            await client.connect()
+        
+        # Get admin's chat
+        admin_entity = await client.get_entity('@group_insta_loader_bot')  # The user's own chat (Saved Messages)
+        
+        # Upload file
+        logger.info(f"Uploading file to admin chat: {file_path}")
+        
+        # Get file name for caption
+        file_name = os.path.basename(file_path)
+        
+        # Caption format: chat_id-status_msg_id-original_reply_to_message_id-file_name
+        caption = f"{chat_id}-{status_msg_id}-{original_reply_to_message_id}-{file_name}"
+        
+        # Upload file (type doesn't matter for caption, use generic send_file)
+        message = await client.send_file(
+            admin_entity,
+            file_path,
+            caption=caption,
+            progress_callback=upload_progress_callback
+        )
+        
+        logger.info(f"✅ File uploaded to admin chat: message_id={message.id}, caption={caption}")
+        return message.id
+        
+    except Exception as e:
+        logger.error(f"Failed to upload file to admin chat: {e}")
+        return None
+
+
+def upload_progress_callback(current, total):
+    """Progress callback for file uploads."""
+    percent = (current / total) * 100
+    logger.debug(f"Upload progress: {percent:.1f}% ({current}/{total} bytes)")
 
 
 # StringSession import for Telethon
