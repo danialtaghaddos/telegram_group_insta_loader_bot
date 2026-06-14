@@ -657,9 +657,9 @@ async def my_chats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def load_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /load command - admin can reply to a message with links to download content."""
-    if not is_admin(update):
+    if not is_admin(update) and not is_moderator(update.effective_user.id):
         return
-    
+
     if not update.message or not update.message.reply_to_message:
         return
     
