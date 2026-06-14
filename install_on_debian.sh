@@ -47,8 +47,8 @@ echo ""
 print_info "Updating package lists..."
 apt-get update -y
 
-print_info "Installing system packages (python3, ffmpeg, nodejs, npm)..."
-apt-get install -y python3 python3-venv python3-pip nodejs npm ffmpeg git curl wget
+print_info "Installing system packages (python3, ffmpeg, nodejs, npm, yt-dlp, gallery-dl)..."
+apt-get install -y python3 python3-venv python3-pip nodejs npm ffmpeg git curl wget yt-dlp gallery-dl
 
 if [ $? -eq 0 ]; then
     print_success "System packages installed"

@@ -6,6 +6,7 @@ Handles moderator permissions, access requests, and related commands.
 
 import os
 import re
+from contextlib import suppress
 from typing import Optional
 
 from telegram import Update
@@ -670,7 +671,10 @@ async def load_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     urls = extract_social_urls(replied_message.text)
     if not urls:
         return
-    
+
+    with suppress(Exception):
+        await update.message.delete()
+
     # Import here to avoid circular imports
     from .handlers import handle_message
     await handle_message(urls, update, context, reply_to_message_id=replied_message.message_id)

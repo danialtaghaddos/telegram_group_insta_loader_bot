@@ -1,4 +1,5 @@
 # bot/handlers.py
+from contextlib import suppress
 from typing import Any, Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -59,10 +60,8 @@ async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     # Check if task exists
     if task_id not in active_tasks:
-        try:
+        with suppress(Exception):
             await query.message.delete()
-        except:
-            pass
         return
     
     task_info = active_tasks[task_id]
@@ -84,10 +83,8 @@ async def handle_cancel_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text("❌ Download cancelled.")
     except Exception as e:
         logger.warning(f"Failed to edit status message for cancellation: {e}")
-        try:
+        with suppress(Exception):
             await query.message.delete()
-        except:
-            pass
     
     # Remove from active_tasks after a short delay to allow the worker to see the cancellation
     # The worker will remove it from active_tasks when it processes the cancellation

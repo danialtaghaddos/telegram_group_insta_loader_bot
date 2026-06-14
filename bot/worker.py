@@ -2,6 +2,7 @@
 import asyncio
 import shutil
 import tempfile
+from contextlib import suppress
 
 from telegram import InputMediaPhoto, InputMediaVideo
 
@@ -24,7 +25,7 @@ def get_audio_duration(file_path: str) -> int:
     try:
         import subprocess
         import json
-        
+
         cmd = [
             "ffprobe", "-v", "quiet", "-print_format", "json",
             "-select_streams", "a:0", "-show_entries",
@@ -32,18 +33,18 @@ def get_audio_duration(file_path: str) -> int:
             file_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        
+
         data = json.loads(result.stdout)
-        
+
         # Try stream duration first, then format duration
         streams = data.get("streams", [])
         if streams and streams[0].get("duration"):
             return int(float(streams[0]["duration"]))
-        
+
         fmt = data.get("format", {})
         if fmt and fmt.get("duration"):
             return int(float(fmt["duration"]))
-        
+
         return 0
     except Exception as e:
         logger.warning(f"Failed to get audio duration for {file_path}: {e}")
@@ -92,12 +93,12 @@ async def worker():
                 message = update.effective_message if update.effective_message else None
             if message is None and status_msg and status_msg.reply_to_message:
                 message = status_msg.reply_to_message
-            
+
             # Get chat_id for fallback sending (when message is None)
             chat_id = status_msg.chat_id if status_msg else None
             if chat_id is None:
                 chat_id = update.effective_chat.id if update.effective_chat else None
-            
+
             url_lower = url.lower()
             if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
                 platform = "YouTube"
@@ -108,10 +109,8 @@ async def worker():
             else:
                 platform = "Unknown"
 
-            try:
+            with suppress(Exception):
                 await status_msg.edit_text("🤖 Loading...")
-            except:
-                pass
 
             temp_dir = tempfile.mkdtemp()
 
@@ -123,10 +122,8 @@ async def worker():
                 # Check if cancelled before starting download
                 if check_cancelled(task_id):
                     logger.info(f"Task {task_id} cancelled before download")
-                    try:
+                    with suppress(Exception):
                         await status_msg.delete()
-                    except:
-                        pass
                     continue
 
                 # Download media
@@ -135,18 +132,14 @@ async def worker():
                 # Check if cancelled after download
                 if check_cancelled(task_id):
                     logger.info(f"Task {task_id} cancelled after download")
-                    try:
+                    with suppress(Exception):
                         await status_msg.delete()
-                    except:
-                        pass
                     continue
 
                 if not files:
                     logger.warning(f"No media found in url: {url}")
-                    try:
+                    with suppress(Exception):
                         await status_msg.edit_text(f"❌ Sorry. Could not fetch from {platform}.")
-                    except:
-                        pass
                     continue
 
                 # Fetch Instagram caption if available
@@ -155,16 +148,12 @@ async def worker():
                     # Check if cancelled before fetching caption
                     if check_cancelled(task_id):
                         logger.info(f"Task {task_id} cancelled before caption fetch")
-                        try:
+                        with suppress(Exception):
                             await status_msg.delete()
-                        except:
-                            pass
                         continue
 
-                    try:
+                    with suppress(Exception):
                         await status_msg.edit_text(f"📝 Fetching caption...")
-                    except:
-                        pass
                     caption = await fetch_instagram_caption(url)
                     # Truncate caption if too long (Telegram limit is 1024 chars)
                     if caption and len(caption) > 1000:
@@ -177,62 +166,50 @@ async def worker():
                         # Check if cancelled before processing
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled before audio processing")
-                            try:
+                            with suppress(Exception):
                                 await status_msg.delete()
-                            except:
-                                pass
                             continue
 
-                        try:
+                        with suppress(Exception):
                             await status_msg.edit_text(f"⚡ Processing audio ...")
-                        except:
-                            pass
-                        
+
                         # Check file size
                         file_size_mb = get_file_size_mb(file_path)
                         logger.info(f"Audio file size: {file_size_mb:.1f}MB")
-                        
+
                         if file_size_mb > 50:
                             # File is too large for Telegram bot, use Telethon user account
                             logger.info(f"Audio file {file_size_mb:.1f}MB exceeds 50MB limit, using Telethon")
-                            
-                            try:
+
+                            with suppress(Exception):
                                 await status_msg.edit_text(f"🚀 Uploading large file ...\n🔜 This may take a few minutes")
-                            except:
-                                pass
-                            
+
                             # Upload to admin chat using Telethon
                             # Caption format: chat_id-status_msg_id-file_name
                             admin_msg_id = await upload_to_admin_chat(file_path, chat_id, status_msg.message_id, update.effective_message.message_id if update.effective_message else original_reply_to_message_id)
-                            
+
                             if admin_msg_id:
                                 logger.info(f"✅ Large file uploaded to admin chat. Admin should forward to bot.")
                                 # The bot will handle the file when admin forwards it
                                 # Just delete the status message - the bot will send the file as its own
-                                try:
+                                with suppress(Exception):
                                     await status_msg.delete()
-                                except:
-                                    pass
                             else:
                                 logger.error("Telethon upload failed")
-                                try:
+                                with suppress(Exception):
                                     await status_msg.edit_text(
                                         "❌ File too large for bot. Please set up Telethon session.\n"
                                         "Run: python generate_session.py"
                                     )
-                                except:
-                                    pass
                             continue
-                        
+
                         # File is within limit, upload normally via bot
-                        try:
+                        with suppress(Exception):
                             await status_msg.edit_text(f"🚀 Uploading audio ...")
-                        except:
-                            pass
-                        
+
                         # Get audio duration using ffprobe
                         duration = get_audio_duration(file_path)
-                        
+
                         if message:
                             sent_msg = await message.reply_audio(
                                 audio=open(file_path, "rb"),
@@ -259,18 +236,14 @@ async def worker():
                     elif file_path.lower().endswith(".mp4"):
                         # Skip compression if file is from cache (already compressed)
                         original_file_path = file_path
-                        try:
+                        with suppress(Exception):
                             await status_msg.edit_text(f"⚡ Processing ...")
-                        except:
-                            pass
-                        
+
                         # Check if cancelled before compression
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled before video compression")
-                            try:
+                            with suppress(Exception):
                                 await status_msg.edit_text("❌ Download cancelled.")
-                            except:
-                                pass
                             continue
 
                         file_path = compress_video(file_path)
@@ -282,16 +255,12 @@ async def worker():
                         # Check if cancelled before upload
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled before video upload")
-                            try:
+                            with suppress(Exception):
                                 await status_msg.edit_text("❌ Download cancelled.")
-                            except:
-                                pass
                             continue
 
-                        try:
+                        with suppress(Exception):
                             await status_msg.edit_text(f"🚀 Uploading ...")
-                        except:
-                            pass
                         if message:
                             sent_msg = await message.reply_video(
                                 video=open(file_path, "rb"),
@@ -327,10 +296,8 @@ async def worker():
                         # Check if cancelled before uploading photo
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled before photo upload")
-                            try:
+                            with suppress(Exception):
                                 await status_msg.edit_text("❌ Download cancelled.")
-                            except:
-                                pass
                             continue
 
                         if message:
@@ -358,10 +325,8 @@ async def worker():
                         # Check if cancelled during media group processing
                         if check_cancelled(task_id):
                             logger.info(f"Task {task_id} cancelled during media group processing")
-                            try:
+                            with suppress(Exception):
                                 await status_msg.edit_text("❌ Download cancelled.")
-                            except:
-                                pass
                             break
 
                         if is_audio_file(f):
@@ -412,25 +377,21 @@ async def worker():
 
                 # No caching: skip updating any cache metadata
 
-                try:
+                with suppress(Exception):
                     await status_msg.delete()
-                except:
-                    pass
 
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"Worker error for {url}: {e}")
-            try:
+            with suppress(Exception):
                 await status_msg.edit_text("❌ Link appears to be broken, or I'm broken.")
-            except:
-                pass
 
         finally:
             # Clean up task from active_tasks
             if task_id:
                 cleanup_task(task_id)
-            
+
             await asyncio.sleep(30)
             queue.task_done()

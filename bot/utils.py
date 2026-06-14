@@ -1,5 +1,6 @@
 # bot/utils.py
 import os, re
+from contextlib import suppress
 
 from .config import MAX_MEDIA_PER_MESSAGE
 
@@ -61,10 +62,9 @@ def extract_social_urls(text: str):
     return list(dict.fromkeys(filtered_urls))[:MAX_MEDIA_PER_MESSAGE]
 
 def get_file_size_mb(file_path: str) -> float:
-    try:
+    with suppress(Exception):
         return os.path.getsize(file_path) / (1024 * 1024)
-    except:
-        return 0.0
+    return 0.0
 
 
 def compress_audio(input_path: str, target_bitrate: str = "96k") -> str:
@@ -124,10 +124,8 @@ def compress_audio(input_path: str, target_bitrate: str = "96k") -> str:
             logger.info(f"✅ Audio compressed: {original_size:.1f}MB -> {compressed_size:.1f}MB")
             
             # Remove original file to save space
-            try:
+            with suppress(Exception):
                 os.unlink(input_path)
-            except:
-                pass
             
             return output_path
         else:
