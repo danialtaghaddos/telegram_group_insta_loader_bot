@@ -447,11 +447,20 @@ def load_facebook_cookies() -> str:
 
 def load_youtube_cookies() -> str:
     """Load YouTube cookies from Google Drive storage (no fallback).
-    
+
     Returns:
         The cookies content as a string, or empty string if not found.
     """
     return _load_cookie_from_drive("youtube_cookies.txt")
+
+
+def load_twitter_cookies() -> str:
+    """Load Twitter/X cookies from Google Drive storage (no fallback).
+
+    Returns:
+        The cookies content as a string, or empty string if not found.
+    """
+    return _load_cookie_from_drive("twitter_cookies.txt")
 
 
 # ============================================================================

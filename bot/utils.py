@@ -8,7 +8,7 @@ def extract_social_urls(text: str):
     # Extended pattern to include YouTube URLs
     pattern = (
         r"https?://(?:www\.)?"
-        r"(?:instagram\.com|facebook\.com|fb\.watch|fb\.com|youtube\.com|m\.youtube\.com|youtu\.be)/[^\s]+"
+        r"(?:instagram\.com|facebook\.com|fb\.watch|fb\.com|youtube\.com|m\.youtube\.com|youtu\.be|x\.com|twitter\.com)/[^\s]+"
     )
     urls = re.findall(pattern, text)
 
@@ -36,6 +36,11 @@ def extract_social_urls(text: str):
         # Skip Facebook stories
         if ('facebook.com' in url_lower or 'fb.com' in url_lower) and '/stories/' in url_lower:
             continue
+
+        # Only allow Twitter/X tweet status URLs
+        if 'x.com' in url_lower or 'twitter.com' in url_lower:
+            if '/status/' not in url_lower:
+                continue
 
         # Skip YouTube channels, user pages, playlists, and other non-video URLs
         # Handle both youtube.com and m.youtube.com (mobile)

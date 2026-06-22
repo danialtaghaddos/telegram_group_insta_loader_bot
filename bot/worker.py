@@ -106,6 +106,8 @@ async def worker():
                 platform = "Instagram"
             elif "facebook.com" in url_lower or "fb.watch" in url_lower or "fb.com" in url_lower:
                 platform = "Facebook"
+            elif "x.com" in url_lower or "twitter.com" in url_lower:
+                platform = "Twitter/X"
             else:
                 platform = "Unknown"
 

@@ -9,6 +9,7 @@ from .storage import (
     load_instagram_cookies,
     load_facebook_cookies,
     load_youtube_cookies,
+    load_twitter_cookies,
 )
 
 TMP_PATH = tempfile.gettempdir()
@@ -253,6 +254,23 @@ def get_youtube_cookies_file():
         logger.error(f"Failed to write YouTube cookies: {e}")
         return None
 
+def get_twitter_cookies_file():
+    """Returns Twitter/X cookies file, loading from Google Drive storage."""
+    path = f"{TMP_PATH}/twitter_cookies.txt"
+    if os.path.exists(path) and os.path.getsize(path) > 10:
+        return path
+    cookies = load_twitter_cookies()
+    if not cookies or not cookies.strip():
+        return None
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(cookies.strip())
+        return path
+    except Exception as e:
+        logger.error(f"Failed to write Twitter cookies: {e}")
+        return None
+
+
 async def download_with_ytdlp(url: str, temp_dir: str):
     is_facebook = "facebook.com" in url or "fb.watch" in url
     cookiefile = get_facebook_cookies_file() if is_facebook else get_instagram_cookies_file()
@@ -378,6 +396,30 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
         raise
 
 
+async def download_twitter(url: str, temp_dir: str):
+    cookiefile = get_twitter_cookies_file()
+    ydl_opts = {
+        "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
+        "quiet": True,
+        "cookiefile": cookiefile,
+        "format": "bv*[filesize_approx<=50M]/bv*[height<=720]/best",
+        "merge_output_format": "mp4",
+        "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "retries": 3,
+        "fragment_retries": 3,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.extract_info(url, download=True)
+    files = []
+    for root, _, filenames in os.walk(temp_dir):
+        for f in sorted(filenames):
+            files.append(os.path.join(root, f))
+    return files
+
+
 async def download_media(url: str, temp_dir: str):
 
     # YouTube: download as audio
@@ -391,6 +433,14 @@ async def download_media(url: str, temp_dir: str):
             return await download_youtube_audio(url, temp_dir, audio_format)
         except Exception as e:
             logger.error(f"YouTube audio download failed for {url}: {e}")
+            return []
+
+    # Twitter/X: use yt-dlp
+    if "x.com" in url_lower or "twitter.com" in url_lower:
+        try:
+            return await download_twitter(url, temp_dir)
+        except Exception as e:
+            logger.error(f"Twitter download failed for {url}: {e}")
             return []
 
     # Instagram: prefer gallery-dl
