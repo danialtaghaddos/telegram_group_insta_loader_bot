@@ -53,12 +53,13 @@ def _get_drive_service() -> Optional[Any]:
     
     try:
         import httplib2
+        from google.auth.transport import httplib2 as google_auth_httplib2
         credentials = service_account.Credentials.from_service_account_file(
             str(service_account_path),
             scopes=['https://www.googleapis.com/auth/drive']
         )
-        http = httplib2.Http(timeout=15)
-        service = build('drive', 'v3', credentials=credentials, http=http, cache_discovery=False)
+        authorized_http = google_auth_httplib2.AuthorizedHttp(credentials, http=httplib2.Http(timeout=15))
+        service = build('drive', 'v3', http=authorized_http, cache_discovery=False)
         return service
     except Exception as exc:
         logger.error(f"Failed to create Google Drive service: {exc}")
