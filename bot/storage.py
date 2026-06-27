@@ -52,11 +52,13 @@ def _get_drive_service() -> Optional[Any]:
         return None
     
     try:
+        import httplib2
         credentials = service_account.Credentials.from_service_account_file(
             str(service_account_path),
             scopes=['https://www.googleapis.com/auth/drive']
         )
-        service = build('drive', 'v3', credentials=credentials)
+        http = httplib2.Http(timeout=15)
+        service = build('drive', 'v3', credentials=credentials, http=http, cache_discovery=False)
         return service
     except Exception as exc:
         logger.error(f"Failed to create Google Drive service: {exc}")
@@ -384,48 +386,70 @@ def get_storage_info() -> dict:
 # Cookie Storage Functions (Google Drive, read-only, no fallback)
 # ============================================================================
 
+def _cookie_cache_path(file_name: str) -> Path:
+    """Return the persistent local cache path for a cookie file."""
+    return LOCAL_STORAGE_ROOT / file_name
+
+
 def _load_cookie_from_drive(file_name: str) -> str:
-    """Load cookie content from Google Drive (no local fallback).
-    
+    """Load cookie content from Google Drive with persistent local fallback.
+
+    On success, writes the content to LOCAL_STORAGE_ROOT so it survives
+    future Drive outages.  On failure, falls back to that cached copy.
+
     Args:
         file_name: The name of the cookie file (e.g., 'instagram_cookies.txt')
-    
+
     Returns:
         The cookie content as a string, or empty string if not found.
     """
     service = _get_drive_service()
-    if not service or not GOOGLE_DRIVE_FOLDER_ID:
+    if service and GOOGLE_DRIVE_FOLDER_ID:
+        try:
+            # Search for the cookie file in the Drive folder
+            query = f"name='{file_name}' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false"
+            response = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name)'
+            ).execute()
+
+            files = response.get('files', [])
+            if files:
+                file_id = files[0]['id']
+                request = service.files().get_media(fileId=file_id)
+                content = request.execute()
+
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8')
+
+                logger.info(f"✅ Loaded '{file_name}' from Google Drive")
+                # Persist to local cache for future fallback
+                try:
+                    cache_path = _cookie_cache_path(file_name)
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_text(content, encoding='utf-8')
+                except Exception as write_exc:
+                    logger.warning(f"Could not cache '{file_name}' locally: {write_exc}")
+                return content
+            else:
+                logger.debug(f"Cookie file '{file_name}' not found in Google Drive")
+
+        except Exception as exc:
+            logger.error(f"Failed to load '{file_name}' from Google Drive: {exc}")
+    else:
         logger.warning(f"Google Drive not configured for {file_name}")
-        return ""
-    
-    try:
-        # Search for the cookie file in the Drive folder
-        query = f"name='{file_name}' and '{GOOGLE_DRIVE_FOLDER_ID}' in parents and trashed=false"
-        response = service.files().list(
-            q=query,
-            spaces='drive',
-            fields='files(id, name)'
-        ).execute()
-        
-        files = response.get('files', [])
-        if not files:
-            logger.debug(f"Cookie file '{file_name}' not found in Google Drive")
-            return ""
-        
-        # Download file content
-        file_id = files[0]['id']
-        request = service.files().get_media(fileId=file_id)
-        content = request.execute()
-        
-        if isinstance(content, bytes):
-            content = content.decode('utf-8')
-        
-        logger.info(f"✅ Loaded '{file_name}' from Google Drive")
-        return content
-        
-    except Exception as exc:
-        logger.error(f"Failed to load '{file_name}' from Google Drive: {exc}")
-        return ""
+
+    # Fallback: use previously-cached local copy
+    cache_path = _cookie_cache_path(file_name)
+    if cache_path.exists() and cache_path.stat().st_size > 10:
+        logger.info(f"Using cached local copy of '{file_name}'")
+        try:
+            return cache_path.read_text(encoding='utf-8')
+        except Exception as exc:
+            logger.error(f"Failed to read local cache for '{file_name}': {exc}")
+
+    return ""
 
 
 def load_instagram_cookies() -> str:
