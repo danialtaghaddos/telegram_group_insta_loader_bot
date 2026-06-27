@@ -40,7 +40,11 @@ from .worker import worker
 import re
 
 async def on_startup(app):
+    from .storage import initialize_from_telegram
+    from .moderators import reload_from_storage
+    await initialize_from_telegram()
     load_activation_state()
+    reload_from_storage()
     for _ in range(1):
         asyncio.create_task(worker())
 

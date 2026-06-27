@@ -28,53 +28,49 @@ access_requests: list[dict] = []  # [{user_id, username, first_name, last_name, 
 
 
 def load_moderators() -> dict[int, set[int]]:
-    """Load moderators from Google Drive storage."""
     try:
         data = load_moderators_from_storage()
         if data:
-            logger.info("Loaded moderators from Google Drive storage")
             return {uid: set(chats) for uid, chats in data.items()}
     except Exception as e:
-        logger.warning(f"Failed to load moderators from Google Drive: {e}")
-    
-    logger.info("No moderators found in Google Drive storage")
+        logger.warning(f"Failed to load moderators: {e}")
     return {}
 
 
 def save_moderators() -> None:
-    """Save moderators to Google Drive storage."""
     try:
         save_moderators_to_storage(moderators)
-        logger.debug("Saved moderators to Google Drive storage")
     except Exception as e:
-        logger.error(f"Failed to save moderators to Google Drive: {e}")
+        logger.error(f"Failed to save moderators: {e}")
 
 
 def load_access_requests() -> list[dict]:
-    """Load access requests from Google Drive storage."""
     try:
         data = load_access_requests_from_storage()
         if data:
-            logger.info("Loaded access requests from Google Drive storage")
             return data
     except Exception as e:
-        logger.warning(f"Failed to load access requests from Google Drive: {e}")
-    
-    logger.info("No access requests found in Google Drive storage")
+        logger.warning(f"Failed to load access requests: {e}")
     return []
 
 
 def save_access_requests() -> None:
-    """Save access requests to Google Drive storage."""
     try:
         save_access_requests_to_storage(access_requests)
-        logger.debug("Saved access requests to Google Drive storage")
     except Exception as e:
-        logger.error(f"Failed to save access requests to Google Drive: {e}")
+        logger.error(f"Failed to save access requests: {e}")
 
-# Initialize storage from files
+
+# Initialize from local files at import time; refreshed from Telegram in on_startup
 moderators = load_moderators()
 access_requests = load_access_requests()
+
+
+def reload_from_storage() -> None:
+    """Reload in-memory state from local files after Telegram sync."""
+    global moderators, access_requests
+    moderators = load_moderators()
+    access_requests = load_access_requests()
 
 
 def is_admin(update: Update) -> bool:
