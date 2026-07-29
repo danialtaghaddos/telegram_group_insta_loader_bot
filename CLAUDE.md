@@ -43,10 +43,10 @@ In `main.py`: callbacks → doorman → protected message handlers
 
 ### Download Flow
 
-1. `handlers.py` extracts URLs, queues them via `asyncio.Queue`
-2. YouTube URLs show an inline keyboard first (confirm audio download)
-3. `worker.py` dequeues, calls `downloaders.py`, compresses with FFmpeg if needed
-4. Uploads to chat; Instagram captions (fetched via yt-dlp metadata) are prepended to first media item, truncated to 1000 chars
+1. `handlers.py` extracts URLs. In group chats they're queued immediately via `asyncio.Queue`. In private chats (moderators/admin only — see User Roles), each URL first gets an inline quality picker: YouTube offers Audio vs. Video, then a format/tier keyboard; other platforms go straight to a High/Medium/Low quality picker. Pending picker state lives in `handlers.PENDING_QUALITY`, keyed by a short request id embedded in the callback data (`q:<rid>:<step>:<value>`).
+2. `worker.py` dequeues `(update, context, url, status_msg, reply_id, message, task_id, quality)` — `quality` is `None`/`{}` for group chats (legacy defaults) or a dict (`kind`, `tier`, `height_cap`/`audio_format`/`audio_bitrate`) for private-chat picks — calls `downloaders.py`, and compresses video with FFmpeg (`video.compress_video`, tier-aware) if needed.
+3. Uploads to chat. Instagram captions (fetched via yt-dlp metadata) are attached to the first media item and truncated to 1000 chars in group chats; in private chats the caption is sent as a separate follow-up message instead, untruncated.
+4. Files over Telegram's 50MB bot upload limit are forwarded via the admin's Telethon account into the admin's chat, then copied into the target chat (see `telethon_client.upload_to_admin_chat` + `main.handle_admin_forwarded_file`). In private chats this includes live upload-progress edits on the status message; any pending follow-up caption is stashed in `config.large_file_captions` and delivered once the copy completes.
 
 ## Key Configuration
 

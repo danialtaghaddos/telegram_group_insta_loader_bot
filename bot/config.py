@@ -22,6 +22,10 @@ queue: asyncio.Queue = asyncio.Queue(maxsize=30)
 active_tasks: dict[int, dict] = {}
 _next_task_id: int = 1
 
+# Captions awaiting delivery once a large file forwarded via the admin's Telethon
+# account has been copied into the target chat. Key: "{chat_id}:{status_msg_id}".
+large_file_captions: dict[str, str] = {}
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,

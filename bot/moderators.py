@@ -717,8 +717,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "<b>Supported Platforms:</b>\n"
     text += "• Instagram - Photos and videos\n"
     text += "• Facebook - Videos\n"
-    text += "• YouTube - Audio: MP3 or M4A\n\n"
-    text += "Simply send links in an activated chat to download media."
+    text += "• Twitter/X - Videos\n"
+    text += "• YouTube - Audio (MP3/M4A) or full video\n\n"
+    text += "Simply send links in an activated chat to download media.\n"
+    text += "In a private chat, you'll get to pick quality/resolution (and audio vs. video for YouTube) before each download."
     
     try:
         await update.message.reply_text(text, parse_mode="HTML")

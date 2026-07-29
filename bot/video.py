@@ -25,22 +25,33 @@ def get_video_metadata(file_path: str):
         logger.warning(f"Failed to get metadata for {file_path}: {e}")
         return 720, 1280, 0  # safe defaults for vertical video
 
-def compress_video(input_path: str) -> str:
+# Quality tiers for private-chat downloads. `None` is the legacy default used
+# for group chats (unchanged from the original hardcoded values).
+TIER_PARAMS = {
+    None: {"height": 720, "crf": "32", "audio_bitrate": "96k"},
+    "high": {"height": 720, "crf": "28", "audio_bitrate": "128k"},
+    "medium": {"height": 480, "crf": "30", "audio_bitrate": "96k"},
+    "low": {"height": 360, "crf": "33", "audio_bitrate": "64k"},
+}
+
+
+def compress_video(input_path: str, tier: str | None = None) -> str:
     if not input_path.lower().endswith((".mp4", ".mov")):
         return input_path
 
+    params = TIER_PARAMS.get(tier, TIER_PARAMS[None])
     output_path = os.path.splitext(input_path)[0] + "_ios.mp4"
-    vf = "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease"
+    vf = f"scale='min({params['height']},iw)':-2:force_original_aspect_ratio=decrease"
 
     cmd = [
         "ffmpeg", "-i", input_path,
         "-c:v", "libx264",
         "-preset", "veryfast",
-        "-crf", "32",                    # Higher CRF = smaller size
+        "-crf", params["crf"],            # Higher CRF = smaller size
         "-c:a", "aac",
-        "-b:a", "96k",
+        "-b:a", params["audio_bitrate"],
         "-pix_fmt", "yuv420p",
-        "-vf", "scale='min(720,iw)':-2:force_original_aspect_ratio=decrease",
+        "-vf", vf,
         "-movflags", "+faststart",
         "-threads", "2",
         "-y",
@@ -55,6 +66,10 @@ def compress_video(input_path: str) -> str:
         return output_path
     except subprocess.TimeoutExpired:
         logger.warning(f"ffmpeg timeout - skipping re-encode for {input_path}")
+        return input_path
+    except subprocess.CalledProcessError as e:
+        stderr_text = (e.stderr or b"").decode(errors="replace").strip()[-2000:]
+        logger.error(f"ffmpeg re-encode failed (exit {e.returncode}) for {input_path}: {stderr_text or '(no stderr captured)'}")
         return input_path
     except Exception as e:
         logger.error(f"ffmpeg re-encode failed: {e}")

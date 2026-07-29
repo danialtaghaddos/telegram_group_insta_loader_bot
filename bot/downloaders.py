@@ -271,19 +271,21 @@ def get_twitter_cookies_file():
         return None
 
 
-async def download_with_ytdlp(url: str, temp_dir: str):
+async def download_with_ytdlp(url: str, temp_dir: str, height_cap: int | None = None):
     is_facebook = "facebook.com" in url or "fb.watch" in url
     cookiefile = get_facebook_cookies_file() if is_facebook else get_instagram_cookies_file()
+
+    format_str = (
+        f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best"
+        if height_cap
+        else "bv*[filesize_approx<=50M]/bv*[height<=720]/best"
+    )
 
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": cookiefile,
-        "format": (
-            "bv*[filesize_approx<=50M]/"
-            "bv*[height<=720]/"
-            "best"
-        ),
+        "format": format_str,
         "merge_output_format": "mp4",
         "postprocessors": [{
             "key": "FFmpegVideoConvertor",
@@ -332,16 +334,16 @@ async def download_with_gallery_dl(url: str, temp_dir: str):
     return sorted(files)
 
 
-async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
+async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a", bitrate: str = "192"):
     """Download YouTube video as audio file (MP3 or M4A)"""
     if format not in ("mp3", "m4a"):
         format = "m4a"
-    
-    logger.info(f"Downloading YouTube audio from {url} as {format.upper()}")
-    
+
+    logger.info(f"Downloading YouTube audio from {url} as {format.upper()} ({bitrate}k)")
+
     # Get YouTube cookies file to prevent 403 errors
     cookiefile = get_youtube_cookies_file()
-    
+
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
@@ -352,7 +354,7 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": format,
-            "preferredquality": "192",
+            "preferredquality": str(bitrate),
         }],
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -396,13 +398,18 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a"):
         raise
 
 
-async def download_twitter(url: str, temp_dir: str):
+async def download_twitter(url: str, temp_dir: str, height_cap: int | None = None):
     cookiefile = get_twitter_cookies_file()
+    format_str = (
+        f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best"
+        if height_cap
+        else "bv*[filesize_approx<=50M]/bv*[height<=720]/best"
+    )
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": cookiefile,
-        "format": "bv*[filesize_approx<=50M]/bv*[height<=720]/best",
+        "format": format_str,
         "merge_output_format": "mp4",
         "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "http_headers": {
@@ -420,25 +427,75 @@ async def download_twitter(url: str, temp_dir: str):
     return files
 
 
-async def download_media(url: str, temp_dir: str):
+async def download_youtube_video(url: str, temp_dir: str, height_cap: int = 720):
+    """Download a YouTube video (not just audio), capped at the given height."""
+    logger.info(f"Downloading YouTube video from {url} (<= {height_cap}p)")
 
-    # YouTube: download as audio
+    cookiefile = get_youtube_cookies_file()
+
+    ydl_opts = {
+        "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
+        "quiet": True,
+        "cookiefile": cookiefile,
+        "format": f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best",
+        "merge_output_format": "mp4",
+        "postprocessors": [{
+            "key": "FFmpegVideoConvertor",
+            "preferedformat": "mp4",
+        }],
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        "retries": 3,
+        "fragment_retries": 3,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filepath = ydl.prepare_filename(info)
+
+    if not filepath.endswith(".mp4"):
+        new_path = os.path.splitext(filepath)[0] + ".mp4"
+        if os.path.exists(filepath):
+            shutil.move(filepath, new_path)
+        filepath = new_path
+
+    return [filepath]
+
+
+async def download_media(url: str, temp_dir: str, quality: dict | None = None):
+    """Download media for a URL.
+
+    `quality` (only populated for the private-chat quality picker) may contain:
+      - kind: "audio" | "video" (YouTube only; other platforms are always video/photo)
+      - height_cap: max video height to request/re-encode to
+      - audio_format: "mp3" | "m4a" (YouTube audio)
+      - audio_bitrate: target kbps as a string (YouTube audio)
+    """
+    quality = quality or {}
     url_lower = url.lower()
+
+    # YouTube: audio (default) or video, depending on user choice
     if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
         try:
+            if quality.get("kind") == "video":
+                height_cap = quality.get("height_cap", 720)
+                return await download_youtube_video(url, temp_dir, height_cap)
+
             # Default to M4A format for better quality
-            audio_format = os.getenv("YOUTUBE_AUDIO_FORMAT", "m4a").lower()
+            audio_format = quality.get("audio_format") or os.getenv("YOUTUBE_AUDIO_FORMAT", "m4a").lower()
             if audio_format not in ("mp3", "m4a"):
                 audio_format = "m4a"
-            return await download_youtube_audio(url, temp_dir, audio_format)
+            audio_bitrate = quality.get("audio_bitrate", "192")
+            return await download_youtube_audio(url, temp_dir, audio_format, audio_bitrate)
         except Exception as e:
-            logger.error(f"YouTube audio download failed for {url}: {e}")
+            logger.error(f"YouTube download failed for {url}: {e}")
             return []
 
     # Twitter/X: use yt-dlp
     if "x.com" in url_lower or "twitter.com" in url_lower:
         try:
-            return await download_twitter(url, temp_dir)
+            return await download_twitter(url, temp_dir, quality.get("height_cap"))
         except Exception as e:
             logger.error(f"Twitter download failed for {url}: {e}")
             return []
@@ -452,7 +509,7 @@ async def download_media(url: str, temp_dir: str):
 
     # Facebook or fallback: use yt-dlp with platform-specific cookies
     try:
-        files = await download_with_ytdlp(url, temp_dir)
+        files = await download_with_ytdlp(url, temp_dir, quality.get("height_cap"))
         return files
     except Exception as e:
         logger.error(f"Download failed for {url}: {e}")

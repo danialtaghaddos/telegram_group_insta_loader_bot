@@ -2,6 +2,7 @@
 import asyncio
 import shutil
 import tempfile
+import time
 from contextlib import suppress
 
 from telegram import InputMediaPhoto, InputMediaVideo
@@ -10,7 +11,7 @@ from bot.utils import get_file_size_mb, compress_audio
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
-from .config import queue, logger, active_tasks, ADMIN_USER_ID
+from .config import queue, logger, active_tasks, large_file_captions, ADMIN_USER_ID
 from .telethon_client import upload_to_admin_chat
 
 
@@ -73,19 +74,47 @@ def cleanup_task(task_id: int):
         del active_tasks[task_id]
 
 
+def _make_progress_callback(status_msg, label: str = "Uploading large file"):
+    """Build a Telethon-compatible (sync or async) progress callback that
+    periodically edits the status message with a percentage, throttled so we
+    don't hammer the Bot API with edits."""
+    state = {"last_percent": -10, "last_time": 0.0}
+
+    async def _cb(current, total):
+        if not total:
+            return
+        percent = int(current * 100 / total)
+        now = time.monotonic()
+        if percent < 100 and (percent - state["last_percent"] < 5 or now - state["last_time"] < 2):
+            return
+        state["last_percent"] = percent
+        state["last_time"] = now
+        with suppress(Exception):
+            await status_msg.edit_text(f"🚀 {label}... {percent}%\n🔜 This may take a few minutes")
+
+    return _cb
+
+
 async def worker():
     while True:
         result = await queue.get()
-        # Support both old 6-tuple and new 7-tuple format (with task_id)
-        if len(result) == 7:
+        # Support old 6/7-tuple formats (no quality dict) as well as the current 8-tuple.
+        if len(result) == 8:
+            update, context, url, status_msg, original_reply_to_message_id, message, task_id, quality = result
+        elif len(result) == 7:
             update, context, url, status_msg, original_reply_to_message_id, message, task_id = result
+            quality = None
         elif len(result) == 6:
             update, context, url, status_msg, original_reply_to_message_id, message = result
             task_id = None
+            quality = None
         else:
             update, context, url, status_msg, original_reply_to_message_id = result
             message = update.message
             task_id = None
+            quality = None
+
+        quality = quality or {}
 
         try:
             # Fallback: try to get message from update, then from status_msg.reply_to_message
@@ -98,6 +127,9 @@ async def worker():
             chat_id = status_msg.chat_id if status_msg else None
             if chat_id is None:
                 chat_id = update.effective_chat.id if update.effective_chat else None
+
+            is_private = bool(update.effective_chat and update.effective_chat.type == "private")
+            video_tier = quality.get("tier") if quality else None
 
             url_lower = url.lower()
             if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
@@ -129,7 +161,7 @@ async def worker():
                     continue
 
                 # Download media
-                files = await download_media(url, temp_dir)
+                files = await download_media(url, temp_dir, quality)
 
                 # Check if cancelled after download
                 if check_cancelled(task_id):
@@ -157,9 +189,20 @@ async def worker():
                     with suppress(Exception):
                         await status_msg.edit_text(f"📝 Fetching caption...")
                     caption = await fetch_instagram_caption(url)
-                    # Truncate caption if too long (Telegram limit is 1024 chars)
-                    if caption and len(caption) > 1000:
-                        caption = caption[:997] + "..."
+
+                # Private chats: send the full caption as a separate follow-up message
+                # (avoids Telegram's 1024-char caption limit). Groups: keep the
+                # existing behavior of attaching a truncated caption to the media.
+                caption_attach = None
+                caption_followup = None
+                if caption:
+                    if is_private:
+                        caption_followup = caption if len(caption) <= 4096 else caption[:4093] + "..."
+                    else:
+                        caption_attach = caption if len(caption) <= 1000 else caption[:997] + "..."
+
+                uploaded_chat_id = None
+                uploaded_message_ids = None
 
                 if len(files) == 1:
                     file_path = files[0]
@@ -186,9 +229,15 @@ async def worker():
                             with suppress(Exception):
                                 await status_msg.edit_text(f"🚀 Uploading large file ...\n🔜 This may take a few minutes")
 
+                            progress_cb = _make_progress_callback(status_msg) if is_private else None
+
                             # Upload to admin chat using Telethon
                             # Caption format: chat_id-status_msg_id-file_name
-                            admin_msg_id = await upload_to_admin_chat(file_path, chat_id, status_msg.message_id, update.effective_message.message_id if update.effective_message else original_reply_to_message_id)
+                            admin_msg_id = await upload_to_admin_chat(
+                                file_path, chat_id, status_msg.message_id,
+                                update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
+                                progress_callback=progress_cb,
+                            )
 
                             if admin_msg_id:
                                 logger.info(f"✅ Large file uploaded to admin chat. Admin should forward to bot.")
@@ -248,7 +297,7 @@ async def worker():
                                 await status_msg.edit_text("❌ Download cancelled.")
                             continue
 
-                        file_path = compress_video(file_path)
+                        file_path = compress_video(file_path, tier=video_tier)
                         # Update files list if compression created a new file
                         if file_path != original_file_path and len(files) == 1:
                             files = [file_path]
@@ -261,6 +310,40 @@ async def worker():
                                 await status_msg.edit_text("❌ Download cancelled.")
                             continue
 
+                        file_size_mb = get_file_size_mb(file_path)
+
+                        if is_private and file_size_mb > 50:
+                            # Too large for the bot to upload directly; forward via the
+                            # admin's Telethon account, with live progress updates.
+                            logger.info(f"Video file {file_size_mb:.1f}MB exceeds 50MB limit, using Telethon")
+
+                            if caption_followup:
+                                large_file_captions[f"{chat_id}:{status_msg.message_id}"] = caption_followup
+
+                            with suppress(Exception):
+                                await status_msg.edit_text("🚀 Uploading large file ...\n🔜 This may take a few minutes")
+
+                            progress_cb = _make_progress_callback(status_msg)
+                            admin_msg_id = await upload_to_admin_chat(
+                                file_path, chat_id, status_msg.message_id,
+                                update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
+                                progress_callback=progress_cb,
+                            )
+
+                            if admin_msg_id:
+                                logger.info("✅ Large video uploaded to admin chat. Admin should forward to bot.")
+                                with suppress(Exception):
+                                    await status_msg.delete()
+                            else:
+                                logger.error("Telethon upload failed")
+                                large_file_captions.pop(f"{chat_id}:{status_msg.message_id}", None)
+                                with suppress(Exception):
+                                    await status_msg.edit_text(
+                                        "❌ File too large for bot. Please set up Telethon session.\n"
+                                        "Run: python generate_session.py"
+                                    )
+                            continue
+
                         with suppress(Exception):
                             await status_msg.edit_text(f"🚀 Uploading ...")
                         if message:
@@ -271,7 +354,7 @@ async def worker():
                                 width=width,
                                 height=height,
                                 duration=duration,
-                                caption=caption if caption else None,
+                                caption=caption_attach,
                                 read_timeout=300,
                                 write_timeout=300,
                                 connect_timeout=60,
@@ -287,7 +370,7 @@ async def worker():
                                 width=width,
                                 height=height,
                                 duration=duration,
-                                caption=caption if caption else None,
+                                caption=caption_attach,
                                 read_timeout=300,
                                 write_timeout=300,
                                 connect_timeout=60,
@@ -306,7 +389,7 @@ async def worker():
                             sent_msg = await message.reply_photo(
                                 photo=open(file_path, "rb"),
                                 reply_to_message_id=original_reply_to_message_id,
-                                caption=caption if caption else None,
+                                caption=caption_attach,
                             )
                             uploaded_chat_id = sent_msg.chat_id
                             uploaded_message_ids = [sent_msg.message_id]
@@ -315,7 +398,7 @@ async def worker():
                                 chat_id=chat_id,
                                 photo=open(file_path, "rb"),
                                 reply_to_message_id=original_reply_to_message_id,
-                                caption=caption if caption else None,
+                                caption=caption_attach,
                             )
                             uploaded_chat_id = sent_msg.chat_id
                             uploaded_message_ids = [sent_msg.message_id]
@@ -338,21 +421,21 @@ async def worker():
                             pass
                         elif f.lower().endswith(".mp4"):
                             original_f = f
-                            f = compress_video(f)
+                            f = compress_video(f, tier=video_tier)
                             # Track the updated file path
                             if f != original_f:
                                 files[i] = f
                             updated_files.append(f)
-                            # Add caption to the first item in media group
-                            if i == 0 and caption:
-                                media_group.append(InputMediaVideo(open(f, "rb"), caption=caption))
+                            # Add caption to the first item in media group (groups only)
+                            if i == 0 and caption_attach:
+                                media_group.append(InputMediaVideo(open(f, "rb"), caption=caption_attach))
                             else:
                                 media_group.append(InputMediaVideo(open(f, "rb")))
                         else:
                             updated_files.append(f)
-                            # Add caption to the first item in media group
-                            if i == 0 and caption:
-                                media_group.append(InputMediaPhoto(open(f, "rb"), caption=caption))
+                            # Add caption to the first item in media group (groups only)
+                            if i == 0 and caption_attach:
+                                media_group.append(InputMediaPhoto(open(f, "rb"), caption=caption_attach))
                             else:
                                 media_group.append(InputMediaPhoto(open(f, "rb")))
                     files = updated_files
@@ -376,6 +459,16 @@ async def worker():
                             if sent_msgs:
                                 uploaded_chat_id = sent_msgs[0].chat_id
                                 uploaded_message_ids = [m.message_id for m in sent_msgs]
+
+                # Private chats: deliver the full caption as its own message, replying
+                # to the media we just sent.
+                if caption_followup and uploaded_chat_id and uploaded_message_ids:
+                    with suppress(Exception):
+                        await context.bot.send_message(
+                            chat_id=uploaded_chat_id,
+                            text=caption_followup,
+                            reply_to_message_id=uploaded_message_ids[0],
+                        )
 
                 # No caching: skip updating any cache metadata
 

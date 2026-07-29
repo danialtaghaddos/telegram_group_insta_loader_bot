@@ -34,8 +34,8 @@ from .moderators import (
     load_command,
     is_moderator,
 )
-from .config import BOT_TOKEN, logger, ADMIN_USER_ID
-from .handlers import handle_message, handle_cancel_callback
+from .config import BOT_TOKEN, logger, ADMIN_USER_ID, large_file_captions
+from .handlers import handle_message, handle_cancel_callback, handle_quality_callback
 from .worker import worker
 import re
 
@@ -97,6 +97,18 @@ async def handle_admin_forwarded_file(update: Update, context: ContextTypes.DEFA
             reply_to_message_id=original_reply_to_message_id
         )
         logger.info(f"✅ Forwarded large file to chat {target_chat_id}")
+
+        # Deliver the full (untruncated) caption, if one was waiting for this upload.
+        caption = large_file_captions.pop(f"{target_chat_id}:{status_msg_id}", None)
+        if caption:
+            try:
+                await context.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=caption,
+                    reply_to_message_id=original_reply_to_message_id,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send follow-up caption to {target_chat_id}: {e}")
         
     except Exception as e:
         logger.error(f"Failed to forward message to {target_chat_id}: {e}")
@@ -177,6 +189,9 @@ def main():
 
     # Cancel callback handler for active downloads
     app.add_handler(CallbackQueryHandler(handle_cancel_callback, pattern=r"^cancel_\d+$"))
+
+    # Private-chat quality/resolution picker callback handler
+    app.add_handler(CallbackQueryHandler(handle_quality_callback, pattern=r"^q:"))
 
     # Doorman message handler - must be before other message handlers
     app.add_handler(MessageHandler(

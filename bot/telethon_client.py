@@ -122,7 +122,13 @@ async def get_chat_info(chat_id: int) -> Optional[dict]:
         return None
 
 
-async def upload_to_admin_chat(file_path: str, chat_id: int, status_msg_id: int, original_reply_to_message_id: int) -> Optional[int]:
+async def upload_to_admin_chat(
+    file_path: str,
+    chat_id: int,
+    status_msg_id: int,
+    original_reply_to_message_id: int,
+    progress_callback=None,
+) -> Optional[int]:
     """
     Upload a file to the admin's chat using the user account.
     The admin will then forward this to the bot, which will send it as its own message.
@@ -166,7 +172,7 @@ async def upload_to_admin_chat(file_path: str, chat_id: int, status_msg_id: int,
             admin_entity,
             file_path,
             caption=caption,
-            progress_callback=upload_progress_callback
+            progress_callback=progress_callback or upload_progress_callback
         )
         
         logger.info(f"✅ File uploaded to admin chat: message_id={message.id}, caption={caption}")
