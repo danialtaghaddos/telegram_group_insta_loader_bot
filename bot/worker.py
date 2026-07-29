@@ -5,13 +5,13 @@ import tempfile
 import time
 from contextlib import suppress
 
-from telegram import InputMediaPhoto, InputMediaVideo
+from telegram import InputMediaPhoto, InputMediaVideo, InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.utils import get_file_size_mb, compress_audio
 
 from .video import compress_video, get_video_metadata
 from .downloaders import download_media, fetch_instagram_caption
-from .config import queue, logger, active_tasks, large_file_captions, ADMIN_USER_ID
+from .config import queue, logger, active_tasks, large_file_captions, ADMIN_USER_ID, UploadCancelledError
 from .telethon_client import upload_to_admin_chat
 
 
@@ -74,13 +74,24 @@ def cleanup_task(task_id: int):
         del active_tasks[task_id]
 
 
-def _make_progress_callback(status_msg, label: str = "Uploading large file"):
+def _cancel_markup(task_id) -> InlineKeyboardMarkup | None:
+    if not task_id:
+        return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{task_id}")]])
+
+
+def _make_progress_callback(status_msg, task_id=None, label: str = "Uploading large file"):
     """Build a Telethon-compatible (sync or async) progress callback that
     periodically edits the status message with a percentage, throttled so we
-    don't hammer the Bot API with edits."""
+    don't hammer the Bot API with edits. Also polls active_tasks for
+    cancellation, aborting the upload by raising UploadCancelledError so a
+    click on the Cancel button actually stops the in-flight transfer."""
     state = {"last_percent": -10, "last_time": 0.0}
+    markup = _cancel_markup(task_id)
 
     async def _cb(current, total):
+        if check_cancelled(task_id):
+            raise UploadCancelledError()
         if not total:
             return
         percent = int(current * 100 / total)
@@ -90,7 +101,10 @@ def _make_progress_callback(status_msg, label: str = "Uploading large file"):
         state["last_percent"] = percent
         state["last_time"] = now
         with suppress(Exception):
-            await status_msg.edit_text(f"🚀 {label}... {percent}%\n🔜 This may take a few minutes")
+            await status_msg.edit_text(
+                f"🚀 {label}... {percent}%\n🔜 This may take a few minutes",
+                reply_markup=markup,
+            )
 
     return _cb
 
@@ -130,6 +144,7 @@ async def worker():
 
             is_private = bool(update.effective_chat and update.effective_chat.type == "private")
             video_tier = quality.get("tier") if quality else None
+            cancel_markup = _cancel_markup(task_id)
 
             url_lower = url.lower()
             if "youtube.com" in url_lower or "m.youtube.com" in url_lower or "youtu.be" in url_lower:
@@ -227,17 +242,26 @@ async def worker():
                             logger.info(f"Audio file {file_size_mb:.1f}MB exceeds 50MB limit, using Telethon")
 
                             with suppress(Exception):
-                                await status_msg.edit_text(f"🚀 Uploading large file ...\n🔜 This may take a few minutes")
+                                await status_msg.edit_text(
+                                    f"🚀 Uploading large file ...\n🔜 This may take a few minutes",
+                                    reply_markup=cancel_markup,
+                                )
 
-                            progress_cb = _make_progress_callback(status_msg) if is_private else None
+                            progress_cb = _make_progress_callback(status_msg, task_id)
 
                             # Upload to admin chat using Telethon
                             # Caption format: chat_id-status_msg_id-file_name
-                            admin_msg_id = await upload_to_admin_chat(
-                                file_path, chat_id, status_msg.message_id,
-                                update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
-                                progress_callback=progress_cb,
-                            )
+                            try:
+                                admin_msg_id = await upload_to_admin_chat(
+                                    file_path, chat_id, status_msg.message_id,
+                                    update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
+                                    progress_callback=progress_cb,
+                                )
+                            except UploadCancelledError:
+                                logger.info(f"Task {task_id} cancelled during large audio upload")
+                                with suppress(Exception):
+                                    await status_msg.edit_text("❌ Download cancelled.")
+                                continue
 
                             if admin_msg_id:
                                 logger.info(f"✅ Large file uploaded to admin chat. Admin should forward to bot.")
@@ -321,14 +345,25 @@ async def worker():
                                 large_file_captions[f"{chat_id}:{status_msg.message_id}"] = caption_followup
 
                             with suppress(Exception):
-                                await status_msg.edit_text("🚀 Uploading large file ...\n🔜 This may take a few minutes")
+                                await status_msg.edit_text(
+                                    "🚀 Uploading large file ...\n🔜 This may take a few minutes",
+                                    reply_markup=cancel_markup,
+                                )
 
-                            progress_cb = _make_progress_callback(status_msg)
-                            admin_msg_id = await upload_to_admin_chat(
-                                file_path, chat_id, status_msg.message_id,
-                                update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
-                                progress_callback=progress_cb,
-                            )
+                            progress_cb = _make_progress_callback(status_msg, task_id)
+                            try:
+                                admin_msg_id = await upload_to_admin_chat(
+                                    file_path, chat_id, status_msg.message_id,
+                                    update.effective_message.message_id if update.effective_message else original_reply_to_message_id,
+                                    progress_callback=progress_cb,
+                                    width=width, height=height, duration=duration,
+                                )
+                            except UploadCancelledError:
+                                logger.info(f"Task {task_id} cancelled during large video upload")
+                                large_file_captions.pop(f"{chat_id}:{status_msg.message_id}", None)
+                                with suppress(Exception):
+                                    await status_msg.edit_text("❌ Download cancelled.")
+                                continue
 
                             if admin_msg_id:
                                 logger.info("✅ Large video uploaded to admin chat. Admin should forward to bot.")

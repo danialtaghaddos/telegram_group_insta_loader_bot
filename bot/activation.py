@@ -50,7 +50,6 @@ def can_moderate_chat(update: Update) -> bool:
 
 def is_activated(chat_id: int) -> bool:
     """Check if bot is activated for a chat. In DEBUG mode, all chats are activated."""
-    logger.info(f"Debug Mode env: {os.getenv('DEBUG_BOT')}")
     if DEBUG:
         logger.info(f"DEBUG mode: treating all chats as activated. Chat ID: {chat_id}")
         return True

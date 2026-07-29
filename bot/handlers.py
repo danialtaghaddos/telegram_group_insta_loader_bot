@@ -14,8 +14,10 @@ from .config import queue, logger, active_tasks, get_next_task_id
 PENDING_QUALITY: dict[str, dict] = {}
 PENDING_QUALITY_TTL_SECONDS = 600
 
-VIDEO_HEIGHT_BY_TIER = {"high": 720, "medium": 480, "low": 360}
-AUDIO_BITRATE_BY_TIER = {"high": "192", "medium": "128", "low": "64"}
+# "max" has no real resolution ceiling; use a sentinel height far above any
+# real video so the yt-dlp format filter (`height<=N`) is effectively a no-op.
+VIDEO_HEIGHT_BY_TIER = {"max": 100000, "high": 720, "medium": 480, "low": 360, "xs": 360}
+AUDIO_BITRATE_BY_TIER = {"max": "320", "high": "192", "medium": "128", "low": "64", "xs": "32"}
 
 
 def _platform_of(url: str) -> str:
@@ -82,9 +84,11 @@ def _prune_pending_quality() -> None:
 
 def _tier_keyboard(rid: str) -> list:
     return [[
-        InlineKeyboardButton("🔼 High", callback_data=f"q:{rid}:tier:high"),
-        InlineKeyboardButton("◻️ Medium", callback_data=f"q:{rid}:tier:medium"),
-        InlineKeyboardButton("🔽 Low", callback_data=f"q:{rid}:tier:low"),
+        InlineKeyboardButton("Max", callback_data=f"q:{rid}:tier:max"),
+        InlineKeyboardButton("720p", callback_data=f"q:{rid}:tier:high"),
+        InlineKeyboardButton("480p", callback_data=f"q:{rid}:tier:medium"),
+        InlineKeyboardButton("360p", callback_data=f"q:{rid}:tier:low"),
+        InlineKeyboardButton("360p-xs", callback_data=f"q:{rid}:tier:xs"),
     ]]
 
 

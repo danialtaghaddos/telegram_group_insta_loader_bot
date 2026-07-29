@@ -15,6 +15,29 @@ from .storage import (
 TMP_PATH = tempfile.gettempdir()
 
 
+def _video_format_selector(height_cap: int | None) -> str:
+    """Build a yt-dlp format selector that prefers H.264 (avc1) video.
+
+    yt-dlp's plain "best video at this height" pick often lands on VP9/AV1
+    (especially with no height cap, i.e. the "max" quality tier), which some
+    Telegram clients can't decode: the video renders as a black frame while
+    audio keeps playing. H.264 is broadly supported, so try it first and only
+    fall back to other codecs if avc1 isn't available at all.
+    """
+    if height_cap:
+        return (
+            f"bv*[height<={height_cap}][vcodec^=avc1]+ba/"
+            f"bv*[height<={height_cap}]+ba/"
+            f"b[height<={height_cap}]/best"
+        )
+    return (
+        "bv*[vcodec^=avc1][filesize_approx<=50M]+ba/"
+        "bv*[vcodec^=avc1][height<=720]+ba/"
+        "bv*[filesize_approx<=50M]/"
+        "bv*[height<=720]/best"
+    )
+
+
 def _shortcode_to_pk(shortcode: str) -> int:
     """Convert Instagram shortcode to numeric ID (pk)"""
     chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
@@ -275,17 +298,11 @@ async def download_with_ytdlp(url: str, temp_dir: str, height_cap: int | None = 
     is_facebook = "facebook.com" in url or "fb.watch" in url
     cookiefile = get_facebook_cookies_file() if is_facebook else get_instagram_cookies_file()
 
-    format_str = (
-        f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best"
-        if height_cap
-        else "bv*[filesize_approx<=50M]/bv*[height<=720]/best"
-    )
-
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": cookiefile,
-        "format": format_str,
+        "format": _video_format_selector(height_cap),
         "merge_output_format": "mp4",
         "postprocessors": [{
             "key": "FFmpegVideoConvertor",
@@ -400,16 +417,11 @@ async def download_youtube_audio(url: str, temp_dir: str, format: str = "m4a", b
 
 async def download_twitter(url: str, temp_dir: str, height_cap: int | None = None):
     cookiefile = get_twitter_cookies_file()
-    format_str = (
-        f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best"
-        if height_cap
-        else "bv*[filesize_approx<=50M]/bv*[height<=720]/best"
-    )
     ydl_opts = {
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": cookiefile,
-        "format": format_str,
+        "format": _video_format_selector(height_cap),
         "merge_output_format": "mp4",
         "postprocessors": [{"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}],
         "http_headers": {
@@ -437,7 +449,7 @@ async def download_youtube_video(url: str, temp_dir: str, height_cap: int = 720)
         "outtmpl": f"{temp_dir}/%(id)s.%(ext)s",
         "quiet": True,
         "cookiefile": cookiefile,
-        "format": f"bv*[height<={height_cap}]+ba/b[height<={height_cap}]/best",
+        "format": _video_format_selector(height_cap),
         "merge_output_format": "mp4",
         "postprocessors": [{
             "key": "FFmpegVideoConvertor",
