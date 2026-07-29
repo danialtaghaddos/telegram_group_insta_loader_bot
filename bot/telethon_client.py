@@ -129,11 +129,73 @@ async def _parallel_upload_file(
     # Always include the main connection as one pool member, so we still
     # make progress even if every extra connection attempt failed.
     pool = [self._sender] + extra_senders
+    # Every sender we've ever opened (initial extras + any replacements swapped
+    # in below), so the finally block disconnects all of them, not just whichever
+    # ones happen to still be sitting in `pool`/`extra_senders` at the end.
+    all_opened_senders = list(extra_senders)
+    # Guards replacement of a given pool slot so that when a connection dies,
+    # the (up to TELETHON_UPLOAD_WORKERS) other tasks sharing that slot don't
+    # each independently open their own redundant replacement connection.
+    pool_locks = [asyncio.Lock() for _ in pool]
+    dead_connections = 0
 
     logger.info(
         f"Parallel-uploading {resolved_name} ({resolved_size} bytes, "
         f"{part_count} parts, {len(pool)} connections x {TELETHON_UPLOAD_WORKERS} workers each)"
     )
+
+    _main_disconnect_wait = 0.0
+
+    async def _ensure_connected(pool_index: int):
+        """Return a live sender for `pool_index`, replacing it if it has died.
+
+        Telethon's MTProtoSender has its own built-in auto-reconnect, but it
+        gives up after a small, fixed retry budget (5 attempts / 1s delay —
+        see MTProtoSender._reconnect) and then permanently marks itself
+        disconnected. Past that point every further send() on it raises a
+        bare ConnectionError, which self._call() (telethon/client/users.py)
+        does not retry on — so without this, one dead extra connection would
+        either wedge that pool slot for the rest of the transfer (silently
+        losing 1/len(pool) of throughput) or, since a raised ConnectionError
+        propagates out of upload_part, abort the whole parallel upload via
+        the FIRST_EXCEPTION wait below.
+        """
+        nonlocal dead_connections, _main_disconnect_wait
+        sender = pool[pool_index]
+        if sender.is_connected():
+            return sender
+        async with pool_locks[pool_index]:
+            sender = pool[pool_index]
+            if sender.is_connected():
+                return sender
+            if pool_index == 0:
+                # self._sender is owned by the TelegramClient itself (used for
+                # everything else the client does), so we must never replace
+                # it out from under it — just give its own reconnect a moment.
+                _main_disconnect_wait += 1
+                if _main_disconnect_wait > 60:
+                    # The client's own reconnect has had a full minute and still
+                    # hasn't come back — something's wrong well beyond this
+                    # upload (every other client call is equally broken), so
+                    # fail loudly instead of spinning the worker forever.
+                    raise ConnectionError(
+                        "Main Telethon connection has been down for over 60s; giving up"
+                    )
+                await asyncio.sleep(1)
+                return pool[pool_index]
+            dead_connections += 1
+            logger.warning(
+                f"Upload connection #{pool_index} died (exhausted Telethon's "
+                f"built-in reconnect budget); opening a replacement "
+                f"({dead_connections} dead so far)"
+            )
+            replacement = await _open_extra_senders(self, 1)
+            if replacement:
+                pool[pool_index] = replacement[0]
+                all_opened_senders.append(replacement[0])
+            else:
+                await asyncio.sleep(1)
+            return pool[pool_index]
 
     fd = os.open(file, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     sent = 0
@@ -151,13 +213,13 @@ async def _parallel_upload_file(
     async def upload_part(part_index: int):
         nonlocal sent
         pool_index = part_index % len(pool)
-        sender = pool[pool_index]
         sem = sems[pool_index]
         offset = part_index * part_size
         async with sem:
             part = await asyncio.to_thread(_pread, fd, part_size, offset)
             req_start = asyncio.get_event_loop().time()
             while True:
+                sender = await _ensure_connected(pool_index)
                 try:
                     ok = await self._call(sender, functions.upload.SaveBigFilePartRequest(
                         file_id, part_index, part_count, part))
@@ -169,6 +231,11 @@ async def _parallel_upload_file(
                         f"({len(flood_waits)} flood waits so far)"
                     )
                     await asyncio.sleep(e.seconds)
+                except ConnectionError as e:
+                    logger.warning(
+                        f"Connection error on pool slot {pool_index}, part {part_index}: {e}"
+                    )
+                    await _ensure_connected(pool_index)
             req_elapsed = asyncio.get_event_loop().time() - req_start
             if req_elapsed > 2:
                 slow_requests.append((part_index, req_elapsed))
@@ -195,7 +262,7 @@ async def _parallel_upload_file(
                 raise exc
     finally:
         os.close(fd)
-        for sender in extra_senders:
+        for sender in all_opened_senders:
             with suppress(Exception):
                 await sender.disconnect()
 
@@ -211,7 +278,8 @@ async def _parallel_upload_file(
     logger.info(
         f"Parallel upload of {resolved_name} finished in {elapsed:.1f}s "
         f"({throughput_kbs:.0f} KB/s) over {len(pool)} connections, "
-        f"{len(flood_waits)} flood waits (total {sum(flood_waits):.1f}s slept)"
+        f"{len(flood_waits)} flood waits (total {sum(flood_waits):.1f}s slept), "
+        f"{dead_connections} dead connections replaced"
     )
 
     return tl_types.InputFileBig(file_id, part_count, resolved_name)
