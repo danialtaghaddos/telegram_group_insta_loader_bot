@@ -76,11 +76,11 @@ def get_video_metadata(file_path: str):
 # CRF (quality-targeted) encoding except "xs", which pins an explicit bitrate
 # since it needs to guarantee a small file size regardless of content.
 TIER_PARAMS = {
-    None: {"height": 720, "crf": "32", "audio_bitrate": "96k"},
-    "high": {"height": 720, "crf": "28", "audio_bitrate": "128k"},
-    "medium": {"height": 480, "crf": "30", "audio_bitrate": "96k"},
-    "low": {"height": 360, "crf": "33", "audio_bitrate": "64k"},
-    "xs": {"height": 360, "video_bitrate": "150k", "audio_bitrate": "32k"},
+    None: {"height": 720, "crf": "18", "audio_bitrate": "96k"},
+    "high": {"height": 720, "crf": "24", "audio_bitrate": "128k"},
+    "medium": {"height": 480, "crf": "28", "audio_bitrate": "96k"},
+    "low": {"height": 360, "crf": "28", "audio_bitrate": "64k", "sample_rate": "11025"},
+    "xs": {"height": 360, "crf": "33", "audio_bitrate": "32k", "sample_rate": "11025"},
 }
 
 
@@ -190,6 +190,9 @@ def compress_video(input_path: str, tier: str | None = None) -> str:
         ]
     else:
         cmd += ["-crf", params["crf"]]     # Higher CRF = smaller size
+
+    if "sample_rate" in params:
+        cmd += [ "-ar", params["sample_rate"]]
 
     cmd += [
         "-c:a", "aac",
