@@ -14,6 +14,7 @@ telegram_group_insta_loader_bot/
 │   ├── worker.py             # Background worker (3 concurrent) for download queue
 │   ├── activation.py         # Chat activation/deactivation and doorman mode
 │   ├── moderators.py         # Moderator management and access requests
+│   ├── hold_list.py          # Hold list (blacklist): /hold, /unhold, /holdList
 │   ├── telethon_client.py    # Telethon client for username resolution
 │   ├── utils.py              # Utility functions
 │   └── video.py              # Video compression and metadata
@@ -23,6 +24,7 @@ telegram_group_insta_loader_bot/
 │   ├── moderators.json       # Format: {user_id: []}
 │   ├── access_requests.json
 │   ├── activation_requests.json
+│   ├── hold_list.json        # List of held (blacklisted) user IDs
 │   └── settings.json
 ├── .env.local                # Local environment variables (not committed)
 ├── requirements.txt
@@ -86,6 +88,8 @@ Optional env vars:
 - `/activate` / `/deactivate` — Toggle bot for current chat
 - `/doorman` — Toggle auto-delete of join/leave messages
 - `/myChats` — Check moderator status
+- `/hold` — Reply to a user's message in a group to put them on hold (their links are ignored); command is deleted, and a report is sent to the moderator's private chat (falls back to admin if that chat is unreachable)
+- `/unhold` — Reply to a user's message, or `/unhold <user_id or @username>`, to remove them from hold
 
 ### Admin only
 - `/listChats` — All activated chats
@@ -94,5 +98,6 @@ Optional env vars:
 - `/requests` — View pending access requests
 - `/addMods @username` / `/removemod @username` — Direct moderator management
 - `/load` — Reply to a message containing links to force-download
+- `/holdList` — List all users currently on hold
 - `/activation_requests` — View pending chat activation requests
 - `/approve_activation <chat_id>` / `/deny_activation <chat_id>` — Handle activation requests

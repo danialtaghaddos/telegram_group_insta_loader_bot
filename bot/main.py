@@ -34,6 +34,12 @@ from .moderators import (
     load_command,
     is_moderator,
 )
+from .hold_list import (
+    hold_command,
+    unhold_command,
+    hold_list_command,
+    is_on_hold,
+)
 from .config import BOT_TOKEN, logger, ADMIN_USER_ID, large_file_captions
 from .handlers import handle_message, handle_cancel_callback, handle_quality_callback
 from .worker import worker
@@ -42,9 +48,11 @@ import re
 async def on_startup(app):
     from .storage import initialize_from_telegram
     from .moderators import reload_from_storage
+    from .hold_list import reload_from_storage as reload_hold_list
     await initialize_from_telegram()
     load_activation_state()
     reload_from_storage()
+    reload_hold_list()
     for _ in range(1):
         asyncio.create_task(worker())
 
@@ -137,11 +145,14 @@ async def protected_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message or not update.message.text:
         return
-    
+
+    if update.effective_user and is_on_hold(update.effective_user.id):
+        return
+
     urls = extract_social_urls(update.message.text)
     if not urls:
         return
-    
+
     if not is_activated(chat_id):
         if update.effective_chat and update.effective_chat.type == "private" and update.effective_user and is_moderator(update.effective_user.id):
             pass  # Allow moderator in private chat
@@ -180,6 +191,11 @@ def main():
 
     # Moderator info commands
     app.add_handler(CommandHandler("myChats", my_chats_command))
+
+    # Hold list (blacklist) commands
+    app.add_handler(CommandHandler("hold", hold_command))
+    app.add_handler(CommandHandler("unhold", unhold_command))
+    app.add_handler(CommandHandler("holdList", hold_list_command))
 
     # Help command
     app.add_handler(CommandHandler("help", help_command))

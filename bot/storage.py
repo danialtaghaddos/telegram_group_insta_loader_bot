@@ -133,6 +133,7 @@ _activated_chats_storage: Optional[TelegramSavedMessagesStorage] = None
 _doorman_chats_storage: Optional[TelegramSavedMessagesStorage] = None
 _moderators_storage: Optional[TelegramSavedMessagesStorage] = None
 _access_requests_storage: Optional[TelegramSavedMessagesStorage] = None
+_hold_list_storage: Optional[TelegramSavedMessagesStorage] = None
 
 
 def _get_activated_chats_storage() -> TelegramSavedMessagesStorage:
@@ -161,6 +162,13 @@ def _get_access_requests_storage() -> TelegramSavedMessagesStorage:
     if _access_requests_storage is None:
         _access_requests_storage = TelegramSavedMessagesStorage("access_requests", [])
     return _access_requests_storage
+
+
+def _get_hold_list_storage() -> TelegramSavedMessagesStorage:
+    global _hold_list_storage
+    if _hold_list_storage is None:
+        _hold_list_storage = TelegramSavedMessagesStorage("hold_list", [])
+    return _hold_list_storage
 
 
 # ── Public load / save functions ───────────────────────────────────────────────
@@ -213,6 +221,15 @@ def save_access_requests_to_storage(requests_data: list[dict]) -> None:
     _get_access_requests_storage().write(requests_data)
 
 
+def load_hold_list_from_storage() -> list[int]:
+    data = _get_hold_list_storage().read()
+    return data if isinstance(data, list) else []
+
+
+def save_hold_list_to_storage(user_ids: list[int]) -> None:
+    _get_hold_list_storage().write(user_ids)
+
+
 # ── Startup sync from Telegram ─────────────────────────────────────────────────
 
 async def initialize_from_telegram() -> None:
@@ -226,6 +243,7 @@ async def initialize_from_telegram() -> None:
         _get_doorman_chats_storage(),
         _get_moderators_storage(),
         _get_access_requests_storage(),
+        _get_hold_list_storage(),
     ]
     for storage in storages:
         await storage.fetch_from_telegram()
